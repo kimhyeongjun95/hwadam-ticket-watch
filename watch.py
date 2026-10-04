@@ -153,12 +153,11 @@ def main():
 
     try:
         with open(STATE_FILE) as f:
-            state = json.load(f)
+            prev = json.load(f).get("dates", {})
     except FileNotFoundError:
-        state = {}
-    prev = state.get("dates", {})
-    first_run = not prev and not state.get("error")
+        prev = {}
 
+    # 알림은 예약 가능해졌을 때만. 품절·조회 실패는 기록(logs)에만 남긴다.
     try:
         cur = fetch(dates)
     except Exception as e:
@@ -167,10 +166,6 @@ def main():
         if os.environ.get("GITHUB_ACTIONS"):
             print(f"::warning title=조회 실패::{reason}")  # 실행 페이지에 경고로 표시
         write_log(now, dates, error=reason)
-        if not state.get("error"):
-            notify("화담숲 감시: 조회 실패", f"{reason}\n복구되면 다시 알려드려요.", 3)
-        state["error"] = reason
-        save(state)
         return
 
     for d, v in cur.items():
@@ -178,24 +173,14 @@ def main():
     write_log(now, dates, cur)
 
     opened = [d for d in dates if cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"]
-    closed = [d for d in dates if cur[d]["status"] != "IN_SALE" and prev.get(d) == "IN_SALE"]
-
     if opened:
         lines = []
         for d in opened:
             slots = ", ".join(f"{t} {q}장" for t, q in cur[d]["slots"][:8]) or "회차 정보 없음"
             lines.append(f"{label(d)}: {slots}")
         notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5)
-    if closed:
-        notify("화담숲 다시 품절", ", ".join(label(d) for d in closed), 2)
-    if state.get("error"):
-        notify("화담숲 감시: 조회 복구", "다시 정상적으로 조회하고 있어요.", 2)
-    if first_run and not opened:
-        summary = ", ".join(f"{label(d)} {'판매중' if cur[d]['status'] == 'IN_SALE' else '품절'}" for d in dates)
-        notify("화담숲 감시 시작", summary, 2)
 
-    state = {"dates": {d: cur[d]["status"] for d in dates}, "error": None}
-    save(state)
+    save({"dates": {d: cur[d]["status"] for d in dates}})
 
 
 def save(state):

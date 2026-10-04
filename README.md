@@ -4,7 +4,7 @@
 품절에서 판매중으로 바뀌면 폰으로 알려 주는 GitHub Actions 감시기.
 
 - 5분마다 조회, 한국 시간 00:00~07:30 은 쉼 (`.github/workflows/watch.yml`)
-- 상태가 바뀔 때만 알림: 예약 가능(긴급) / 다시 품절 / 조회 실패·복구 / 첫 실행 시 감시 시작
+- 알림은 예약 가능해졌을 때만 (긴급). 품절·조회 실패는 알리지 않고 실행 기록에만 남김
 - 직전 상태는 `state.json` 에 커밋해 둠
 
 ## 알림 설정 (Settings → Secrets and variables → Actions)
