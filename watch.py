@@ -15,6 +15,9 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 PRODUCT_URL = "https://leisure-web.yanolja.com/leisure/10367229"
+# NOL 앱 안에서 상품 페이지를 바로 여는 주소 (사이트가 쓰는 webView 링크와 같은 형식)
+APP_PRODUCT_URL = f"nol-app://wv?url={PRODUCT_URL}"
+QUANTITY = int(os.environ.get("QUANTITY", "2"))  # 이 매수 이상 남은 회차를 알림에서 앞세운다
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
 API_HEADERS = {
@@ -92,7 +95,9 @@ def notify(title, message, priority=3):
     if topic:
         http("https://ntfy.sh/", {
             "topic": topic, "title": title, "message": message,
-            "priority": priority, "click": PRODUCT_URL,
+            "priority": priority, "click": APP_PRODUCT_URL,
+            "actions": [{"action": "view", "label": "앱에서 열기", "url": APP_PRODUCT_URL, "clear": True},
+                        {"action": "view", "label": "웹에서 열기", "url": PRODUCT_URL, "clear": True}],
             "tags": ["maple_leaf"] if priority >= 4 else [],
         })
         sent = True
@@ -179,8 +184,15 @@ def main():
     if opened:
         lines = []
         for d in opened:
-            slots = ", ".join(f"{t} {q}장" for t, q in cur[d]["slots"][:8]) or "회차 정보 없음"
-            lines.append(f"{label(d)}: {slots}")
+            # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
+            # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
+            enough = [f"{t}({q})" for t, q in sorted(cur[d]["slots"]) if q >= QUANTITY]
+            few = [f"{t}({q})" for t, q in sorted(cur[d]["slots"]) if q < QUANTITY]
+            line = f"{label(d)} {QUANTITY}장 이상: {', '.join(enough[:6]) or '없음'}"
+            if few:
+                line += f" / 그 밖: {', '.join(few[:4])}"
+            lines.append(line)
+        lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
         notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5)
 
     save({"dates": {d: cur[d]["status"] for d in dates}})
