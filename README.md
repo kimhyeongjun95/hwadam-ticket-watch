@@ -3,7 +3,7 @@
 [NOL(야놀자) 화담숲 입장권](https://leisure-web.yanolja.com/leisure/10367229)에서 지정한 날짜(기본 10/31, 11/1)가
 품절에서 판매중으로 바뀌면 폰으로 알려 주는 GitHub Actions 감시기.
 
-- 5분마다 조회, 한국 시간 00:00~07:30 은 쉼 (`.github/workflows/watch.yml`)
+- 1분마다 조회, 한국 시간 00:00~07:30 은 쉼. GitHub 크론이 잘 안 돌아서 cron-job.org 가 workflow_dispatch 로 실행시킨다
 - 알림은 예약 가능해졌을 때만 (긴급). 품절·조회 실패는 알리지 않고 실행 기록에만 남김
 - 직전 상태는 `state.json` 에 커밋해 둠
 
