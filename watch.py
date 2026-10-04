@@ -76,8 +76,11 @@ def fetch(dates):
         st = status.get(d, "UNKNOWN")
         slots = []
         if st == "IN_SALE":
-            slots = [(r["time"], r["inventoryQuantity"]) for r in api(f"/rounds?date={d}")
-                     if r["inventoryQuantity"] > 0]
+            try:
+                slots = [(r["time"], r["inventoryQuantity"]) for r in api(f"/rounds?date={d}")
+                         if r["inventoryQuantity"] > 0]
+            except Exception:
+                pass  # 회차 조회가 실패해도 예약 가능 알림은 보낸다
         result[d] = {"status": st, "slots": slots}
     return result
 
