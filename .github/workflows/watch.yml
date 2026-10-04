@@ -25,20 +25,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 실행 기록은 main 을 어지럽히지 않게 logs 브랜치에 쌓는다
+      - uses: actions/checkout@v4
+        with:
+          ref: logs
+          path: logs
+
       - run: python3 watch.py
         env:
           # 수동 실행은 조용한 시간대에도 조회한다
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           NOTIFY_TEST: ${{ inputs.test_notify && '1' || '' }}
+          LOG_DIR: logs
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: 상태 저장
+      - name: 상태·기록 저장
         run: |
-          git add state.json
-          git diff --cached --quiet && exit 0
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -q -m "state: $(TZ=Asia/Seoul date '+%m/%d %H:%M') KST"
-          git push
+          save() {  # $1 = 저장소 폴더, $2 = 브랜치
+            git -C "$1" add -A
+            git -C "$1" diff --cached --quiet && return 0
+            git -C "$1" -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "$(TZ=Asia/Seoul date '+%m/%d %H:%M') KST"
+            git -C "$1" pull -q --rebase origin "$2" && git -C "$1" push -q origin "HEAD:$2"
+          }
+          save logs logs
+          save . main

@@ -3,7 +3,9 @@
 
 지정한 날짜가 품절 → 판매중으로 바뀌면 ntfy / 텔레그램으로 알린다.
 상태는 state.json 에 남겨 바뀔 때만 알림이 가도록 한다.
+LOG_DIR 이 있으면 실행마다 결과(날짜.csv)와 API 응답 원문(날짜.jsonl)을 쌓는다.
 """
+import csv
 import json
 import os
 import sys
@@ -29,7 +31,9 @@ KST = timezone(timedelta(hours=9))
 QUIET_START, QUIET_END = (0, 0), (7, 30)  # 이 시간대(KST)에는 조회하지 않는다
 TARGET_DATES = [d.strip() for d in os.environ.get("TARGET_DATES", "2026-10-31,2026-11-01").split(",") if d.strip()]
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
+LOG_DIR = os.environ.get("LOG_DIR")
 WEEKDAYS = "월화수목금토일"
+RAW = []  # 이번 실행의 API 응답 원문 (로그용)
 
 
 def label(d):
@@ -46,11 +50,18 @@ def http(url, data=None, headers=None, timeout=15):
         return json.load(r)
 
 
+def describe(e):
+    return f"HTTP {e.code}" if isinstance(e, urllib.error.HTTPError) else repr(e)
+
+
 def api(path):
     for attempt in range(2):
         try:
-            return http(API + path, headers=API_HEADERS)["body"]
-        except Exception:
+            body = http(API + path, headers=API_HEADERS)["body"]
+            RAW.append({"path": path, "body": body})
+            return body
+        except Exception as e:
+            RAW.append({"path": path, "error": describe(e)})
             if attempt:
                 raise
             time.sleep(5)
@@ -97,6 +108,36 @@ def in_quiet_hours(now):
     return QUIET_START <= (now.hour, now.minute) < QUIET_END
 
 
+def cell(v):
+    if v["status"] == "IN_SALE":
+        return f"판매중 {sum(q for _, q in v['slots'])}장"
+    return "품절" if v["status"] == "SOLD_OUT" else v["status"]
+
+
+def write_log(now, dates, cur=None, error=None):
+    """실행 결과 한 줄: LOG_DIR 의 날짜.csv / 날짜.jsonl, 그리고 Actions 실행 요약"""
+    run = os.environ.get("GITHUB_RUN_ID", "local")
+    header = ["시각(KST)", "결과"] + [label(d) for d in dates] + ["실행"]
+    row = [f"{now:%H:%M:%S}", error or "정상"] + [cell(cur[d]) if cur else "" for d in dates] + [run]
+    if LOG_DIR:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        csv_path = os.path.join(LOG_DIR, f"{now:%Y-%m-%d}.csv")
+        new = not os.path.exists(csv_path)
+        with open(csv_path, "a", newline="") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(header)
+            w.writerow(row)
+        with open(os.path.join(LOG_DIR, f"{now:%Y-%m-%d}.jsonl"), "a") as f:
+            rec = {"t": now.isoformat(timespec="seconds"), "run": run, "error": error, "raw": RAW}
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write("| " + " | ".join(header[:-1]) + " |\n" + "|---" * (len(header) - 1) + "|\n")
+            f.write("| " + " | ".join(row[:-1]) + " |\n")
+
+
 def main():
     now = datetime.now(KST)
     if os.environ.get("NOTIFY_TEST"):
@@ -121,8 +162,11 @@ def main():
     try:
         cur = fetch(dates)
     except Exception as e:
-        reason = f"HTTP {e.code}" if isinstance(e, urllib.error.HTTPError) else repr(e)
+        reason = describe(e)
         print(f"조회 실패: {reason}")
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::warning title=조회 실패::{reason}")  # 실행 페이지에 경고로 표시
+        write_log(now, dates, error=reason)
         if not state.get("error"):
             notify("화담숲 감시: 조회 실패", f"{reason}\n복구되면 다시 알려드려요.", 3)
         state["error"] = reason
@@ -131,6 +175,7 @@ def main():
 
     for d, v in cur.items():
         print(d, v["status"], v["slots"])
+    write_log(now, dates, cur)
 
     opened = [d for d in dates if cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"]
     closed = [d for d in dates if cur[d]["status"] != "IN_SALE" and prev.get(d) == "IN_SALE"]
