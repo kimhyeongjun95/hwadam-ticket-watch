@@ -161,9 +161,11 @@ def main():
 
     try:
         with open(STATE_FILE) as f:
-            prev = json.load(f).get("dates", {})
+            state = json.load(f)
     except FileNotFoundError:
-        prev = {}
+        state = {}
+    prev = state.get("dates", {})
+    prev_open = state.get("open", {})  # 날짜별로 지난번에 재고가 있던 회차
 
     # 알림은 예약 가능해졌을 때만. 품절·조회 실패는 기록(logs)에만 남긴다.
     try:
@@ -180,22 +182,28 @@ def main():
         print(d, v["status"], v["slots"])
     write_log(now, dates, cur)
 
-    opened = [d for d in dates if cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"]
+    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 하나라도 새로 재고가 생기면 알린다.
+    # 날짜가 이미 판매중이어도 다른 회차가 새로 열리면 다시 알린다.
+    cur_open = {d: sorted(t for t, q in cur[d]["slots"] if q > 0) for d in dates}
+    opened = {}
+    for d in dates:
+        new = [t for t in cur_open[d] if t not in prev_open.get(d, [])]
+        # 회차 조회가 실패해 회차를 모르면 날짜가 새로 열린 것만이라도 알린다
+        if new or (cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"):
+            opened[d] = new
     if opened:
         lines = []
-        for d in opened:
+        for d, new in opened.items():
             # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
             # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
-            enough = [f"{t}({q})" for t, q in sorted(cur[d]["slots"]) if q >= QUANTITY]
-            few = [f"{t}({q})" for t, q in sorted(cur[d]["slots"]) if q < QUANTITY]
-            line = f"{label(d)} {QUANTITY}장 이상: {', '.join(enough[:6]) or '없음'}"
-            if few:
-                line += f" / 그 밖: {', '.join(few[:4])}"
-            lines.append(line)
+            qty = dict(cur[d]["slots"])
+            enough = [f"{t}({q})" for t, q in sorted(qty.items()) if q >= QUANTITY]
+            lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
+            lines.append(f"  {QUANTITY}장 이상 남은 회차: {', '.join(enough[:6]) or '없음'}")
         lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
         notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5)
 
-    save({"dates": {d: cur[d]["status"] for d in dates}})
+    save({"dates": {d: cur[d]["status"] for d in dates}, "open": cur_open})
 
 
 def save(state):
