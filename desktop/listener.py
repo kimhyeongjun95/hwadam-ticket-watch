@@ -12,13 +12,16 @@ import os
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOPIC_FILE = os.path.join(HERE, "..", ".ntfy-topic")
 AUTO_MARK = "#hwadam-auto="
+LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오는 로컬 포트 (extension/background.js)
 # python.org 파이썬은 인증서 묶음이 없어 HTTPS 가 실패하니 macOS 시스템 인증서를 쓴다
 SSL_CTX = ssl.create_default_context()
 if os.path.exists("/etc/ssl/cert.pem"):
@@ -47,6 +50,31 @@ end tell'''
     subprocess.run(["osascript", "-e",
                     'display notification "크롬에서 주문서를 띄우는 중이에요. 결제만 하세요." '
                     'with title "화담숲 예약 가능" sound name "Glass"'], check=False)
+
+
+class ExtensionLog(BaseHTTPRequestHandler):
+    """확장이 POST /log {"log": "..."} 로 보낸 진행 상황을 이 로그에 남긴다"""
+
+    def do_POST(self):
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            log(f"확장: {body.get('log')}")
+        except Exception as e:
+            log(f"확장 로그 읽기 실패: {e!r}")
+        self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass  # 접속 기록은 남기지 않는다
+
+
+def serve_extension_log():
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", LOG_PORT), ExtensionLog)
+    except OSError as e:
+        log(f"확장 로그 서버를 못 띄움 (포트 {LOG_PORT}): {e}")
+        return
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
 def pc_url(msg):
@@ -87,6 +115,7 @@ def main():
         return
     with open(TOPIC_FILE) as f:
         topic = f.read().strip()
+    serve_extension_log()
     listen(topic)
 
 

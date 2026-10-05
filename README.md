@@ -40,5 +40,8 @@
 3. `desktop/install.sh` — 로그인할 때마다 `desktop/listener.py` 가 ntfy 를 듣도록 등록 (끄기: `desktop/uninstall.sh`)
 4. 처음 한 번 "python3 이(가) Google Chrome 을 제어하려고 합니다" 창이 뜨면 허용 (휴대폰 폭 창으로 열어야 옵션 창이 뜸)
 
+진행 상황은 확장이 수신기로 보내서 `~/Library/Logs/hwadam-listener.log` 에 남는다 (`확장: …` 줄).
+확장 파일을 고친 뒤에는 `chrome://extensions` 에서 새로고침(↻) 해야 반영된다.
+
 시험: `python3 desktop/listener.py --test "https://leisure-web.yanolja.com/leisure/10367229#hwadam-auto=2026-10-29_16:40_2_dry"`
 (`_dry` 는 구매하기 직전에 멈춤. 날짜·회차는 재고 있는 것으로)

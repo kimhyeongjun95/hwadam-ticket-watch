@@ -20,6 +20,8 @@
     if (color) banner.style.background = color;
     if (!banner.isConnected && document.body) document.body.appendChild(banner);
     console.log("[hwadam-auto]", text);
+    // 맥 수신기 로그에도 남긴다 (background.js 가 localhost 로 전달)
+    try { chrome.runtime.sendMessage({ log: text }); } catch (_) {}
   };
   const stop = (text) => { say(text, "#b91c1c"); throw new Error(text); };
 
@@ -47,21 +49,22 @@
       if (e.message.includes("로그인")) throw e;
     }
 
-    // 1. 옵션 창 열기 — 레이아웃마다 '옵션 선택하기' 버튼이 여럿이라 달력이 뜰 때까지 차례로 눌러 본다
+    // 1. 옵션 창 열기. 버튼은 서버가 그린 HTML 에 먼저 보이지만 React 가 붙기 전에는 눌러도 반응이 없어서,
+    //    페이지 로드가 끝난 뒤에도 달력이 뜰 때까지 1초마다 다시 누른다. 레이아웃마다 버튼이 여럿이라 뒤에서부터.
+    if (document.readyState !== "complete") await new Promise((r) => addEventListener("load", r, { once: true }));
     const calendarOpen = () => document.querySelector('button[aria-label="다음 날짜로 이동"]');
-    const openers = await waitFor(() => {
-      const b = buttons().filter((e) => text(e) === "옵션 선택하기");
-      return b.length ? b : null;
-    }, "'옵션 선택하기' 버튼", 20000);
-    for (const b of openers.reverse()) {
-      if (calendarOpen()) break;
-      b.click();
-      await sleep(800);
+    for (const end = Date.now() + 20000; !calendarOpen() && Date.now() < end; ) {
+      for (const b of buttons().filter((e) => text(e) === "옵션 선택하기").reverse()) {
+        if (calendarOpen()) break;
+        b.click();
+        await sleep(1000);
+      }
+      await sleep(300);
     }
     if (!calendarOpen() && innerWidth > 700) {
       stop("창이 넓으면 옵션 창이 안 열려요. 창 폭을 휴대폰처럼 좁게 줄이고 다시 열어 주세요.");
     }
-    await waitFor(calendarOpen, "날짜 달력");
+    await waitFor(calendarOpen, "날짜 달력", 3000);
 
     // 2. 날짜 — 달력 칸은 <button><abbr aria-label="2026년 10월 31일">31</abbr></button>
     const dayLabel = `${y}년 ${Number(mo)}월 ${Number(d)}일`;
@@ -107,7 +110,8 @@
     if (!buy) stop("'구매하기' 버튼을 못 찾았어요. 직접 눌러 주세요.");
     if (dry) {
       buy.style.outline = "4px solid #f59e0b";
-      return say("시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리).", "#b45309");
+      const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${input.value}장`, "#b45309");
     }
     say("구매하기 누름 — 주문서가 뜨면 결제만 하세요.", "#047857");
     buy.click();
