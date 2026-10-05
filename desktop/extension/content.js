@@ -1,0 +1,117 @@
+// 화담숲 상품 페이지가 #hwadam-auto=날짜_시간_매수 를 달고 열리면
+// 날짜 → 회차 → 입장권 성인 → 일반 → 매수 → 구매하기 순서로 눌러 주문서를 띄운다. 결제는 사람이 한다.
+// 끝에 _dry 를 붙이면 구매하기 직전에 멈춘다 (시험용).
+// 사이트가 뜨면서 주소의 # 부분을 지워 버려서, 페이지 스크립트보다 먼저(document_start) 읽어 둔다.
+(() => {
+  const m = location.hash.match(/^#hwadam-auto=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})_(\d+)(_dry)?$/);
+  if (!m) return;
+  const [, y, mo, d, time, qtyText, dry] = m;
+  const qty = Number(qtyText);
+  // 새로고침해도 다시 돌지 않게 표시를 지운다
+  history.replaceState(null, "", location.pathname + location.search);
+
+  const banner = document.createElement("div");
+  banner.style.cssText =
+    "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
+    "padding:10px 16px;border-radius:10px;background:#1f2937;color:#fff;font:600 14px/1.4 sans-serif;" +
+    "box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw";
+  const say = (text, color) => {
+    banner.textContent = `화담숲 자동 진행: ${text}`;
+    if (color) banner.style.background = color;
+    if (!banner.isConnected && document.body) document.body.appendChild(banner);
+    console.log("[hwadam-auto]", text);
+  };
+  const stop = (text) => { say(text, "#b91c1c"); throw new Error(text); };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const visible = (e) => !!(e && (e.offsetWidth || e.offsetHeight));
+  const text = (e) => (e.textContent || "").trim().replace(/\s+/g, " ");
+  async function waitFor(find, what, ms = 10000) {
+    for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) {
+      const el = find();
+      if (el) return el;
+    }
+    return stop(`${what}을(를) 찾지 못했어요. 직접 진행해 주세요.`);
+  }
+  const buttons = (sel = "button") => [...document.querySelectorAll(sel)].filter(visible);
+
+  async function run() {
+    if (document.readyState === "loading") await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
+    say(`${Number(mo)}/${Number(d)} ${time} 성인 ${qty}장 고르는 중…`);
+
+    // 0. 로그인 확인 (안 돼 있으면 구매 단계에서 로그인 창이 뜬다)
+    try {
+      const props = JSON.parse(document.getElementById("__NEXT_DATA__").textContent).props.pageProps;
+      if (!props.isLoggedIn) stop("크롬에 NOL 로그인이 안 돼 있어요. 로그인 후 직접 진행해 주세요.");
+    } catch (e) {
+      if (e.message.includes("로그인")) throw e;
+    }
+
+    // 1. 옵션 창 열기 — 레이아웃마다 '옵션 선택하기' 버튼이 여럿이라 달력이 뜰 때까지 차례로 눌러 본다
+    const calendarOpen = () => document.querySelector('button[aria-label="다음 날짜로 이동"]');
+    const openers = await waitFor(() => {
+      const b = buttons().filter((e) => text(e) === "옵션 선택하기");
+      return b.length ? b : null;
+    }, "'옵션 선택하기' 버튼", 20000);
+    for (const b of openers.reverse()) {
+      if (calendarOpen()) break;
+      b.click();
+      await sleep(800);
+    }
+    if (!calendarOpen() && innerWidth > 700) {
+      stop("창이 넓으면 옵션 창이 안 열려요. 창 폭을 휴대폰처럼 좁게 줄이고 다시 열어 주세요.");
+    }
+    await waitFor(calendarOpen, "날짜 달력");
+
+    // 2. 날짜 — 달력 칸은 <button><abbr aria-label="2026년 10월 31일">31</abbr></button>
+    const dayLabel = `${y}년 ${Number(mo)}월 ${Number(d)}일`;
+    let day = null;
+    for (let i = 0; i < 4 && !day; i++) {
+      day = [...document.querySelectorAll(`abbr[aria-label="${dayLabel}"]`)].map((a) => a.closest("button")).find(visible);
+      if (!day) {
+        document.querySelector('button[aria-label="다음 날짜로 이동"]')?.click();
+        await sleep(500);
+      }
+    }
+    if (!day) stop(`달력에서 ${dayLabel}을 못 찾았어요.`);
+    if (day.disabled) stop(`${dayLabel}은 그새 품절됐어요.`);
+    day.click();
+
+    // 3. 회차 — <button role="option" aria-label="14:00 선택">14:00 3매</button>, 품절이면 '마감'
+    const slot = await waitFor(() => document.querySelector(`button[role="option"][aria-label="${time} 선택"]`), `${time} 회차`);
+    if (slot.disabled || /마감/.test(text(slot))) stop(`${time} 회차가 그새 마감됐어요. 다른 회차를 직접 골라 주세요.`);
+    slot.click();
+
+    // 4. 이용자: 입장권 성인
+    (await waitFor(() => buttons('button[role="option"]').find((e) => text(e) === "입장권 성인"), "'입장권 성인'")).click();
+
+    // 5. 이용자 할인: 일반
+    (await waitFor(() => buttons('button[role="option"]').find((e) => text(e).startsWith("일반")), "'일반' 요금")).click();
+
+    // 6. 매수
+    const input = await waitFor(() => buttons('input[aria-label="숫자 입력"]')[0], "매수 입력칸");
+    for (let i = 0; i < 10 && Number(input.value) < qty; i++) {
+      const plus = document.querySelector('button[aria-label="플러스 버튼"]');
+      if (!plus || plus.disabled) break;
+      plus.click();
+      await sleep(300);
+    }
+    if (Number(input.value) !== qty) stop(`${qty}장으로 못 맞췄어요 (지금 ${input.value}장). 남은 수량이 모자랄 수 있어요.`);
+
+    // 7. 구매하기 — 매수 입력칸과 같은 창 안의 버튼
+    let box = input.parentElement, buy = null;
+    while (box && !buy) {
+      buy = [...box.querySelectorAll("button")].find((e) => visible(e) && text(e) === "구매하기" && !e.disabled);
+      box = box.parentElement;
+    }
+    if (!buy) stop("'구매하기' 버튼을 못 찾았어요. 직접 눌러 주세요.");
+    if (dry) {
+      buy.style.outline = "4px solid #f59e0b";
+      return say("시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리).", "#b45309");
+    }
+    say("구매하기 누름 — 주문서가 뜨면 결제만 하세요.", "#047857");
+    buy.click();
+  }
+
+  run().catch((e) => console.warn("[hwadam-auto]", e));
+})();

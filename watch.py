@@ -88,8 +88,11 @@ def fetch(dates):
     return result
 
 
-def notify(title, message, priority=3):
+def notify(title, message, priority=3, pc_url=None):
+    """pc_url: 맥의 알림 수신기(desktop/listener.py)가 크롬으로 열어 주문서까지 자동 진행할 주소"""
     print(f"[알림 p{priority}] {title}\n{message}")
+    if pc_url:
+        print(f"  [PC 자동 진행] {pc_url}")
     sent = False
     topic = os.environ.get("NTFY_TOPIC")
     if topic:
@@ -97,7 +100,8 @@ def notify(title, message, priority=3):
             "topic": topic, "title": title, "message": message,
             "priority": priority, "click": APP_PRODUCT_URL,
             "actions": [{"action": "view", "label": "앱에서 열기", "url": APP_PRODUCT_URL, "clear": True},
-                        {"action": "view", "label": "웹에서 열기", "url": PRODUCT_URL, "clear": True}],
+                        {"action": "view", "label": "웹에서 열기", "url": PRODUCT_URL, "clear": True}]
+                       + ([{"action": "view", "label": "PC 자동 진행", "url": pc_url, "clear": True}] if pc_url else []),
             "tags": ["maple_leaf"] if priority >= 4 else [],
         })
         sent = True
@@ -192,7 +196,7 @@ def main():
         if new or (cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"):
             opened[d] = new
     if opened:
-        lines = []
+        lines, target = [], None
         for d, new in opened.items():
             # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
             # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
@@ -200,8 +204,17 @@ def main():
             enough = [f"{t}({q})" for t, q in sorted(qty.items()) if q >= QUANTITY]
             lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
             lines.append(f"  {QUANTITY}장 이상 남은 회차: {', '.join(enough[:6]) or '없음'}")
+            # PC 자동 진행 대상: 새로 열린 회차 중 QUANTITY 장 이상인 가장 이른 것, 없으면 아무 회차나
+            if target is None:
+                cands = [t for t in new if qty.get(t, 0) >= QUANTITY] or \
+                        [t for t, q in sorted(qty.items()) if q >= QUANTITY]
+                if cands:
+                    target = (d, min(cands))
         lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
-        notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5)
+        pc_url = f"{PRODUCT_URL}#hwadam-auto={target[0]}_{target[1]}_{QUANTITY}" if target else None
+        if pc_url:
+            lines.append(f"맥이 켜져 있으면 {label(target[0])} {target[1]} 성인 {QUANTITY}장 주문서를 띄워요.")
+        notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5, pc_url=pc_url)
 
     save({"dates": {d: cur[d]["status"] for d in dates}, "open": cur_open})
 

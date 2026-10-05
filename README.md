@@ -30,3 +30,15 @@
 - 테스트 알림: Actions → watch → Run workflow → "테스트 알림만 보내기" 체크
 - 날짜 변경: `watch.py` 의 `TARGET_DATES` 기본값 수정
 - 끝나면: Actions → watch → ⋯ → Disable workflow
+
+## 맥에서 주문서까지 자동으로 띄우기 (선택)
+
+맥이 켜져 있으면 예약 가능 알림을 받아 크롬에서 날짜·회차·성인·일반·2장을 고르고 '구매하기'까지 누른다. 결제는 직접.
+
+1. 크롬 `chrome://extensions` → 개발자 모드 → 압축해제된 확장 프로그램 로드 → `desktop/extension`
+2. 그 크롬(마지막으로 쓰는 프로필)에서 NOL 로그인
+3. `desktop/install.sh` — 로그인할 때마다 `desktop/listener.py` 가 ntfy 를 듣도록 등록 (끄기: `desktop/uninstall.sh`)
+4. 처음 한 번 "python3 이(가) Google Chrome 을 제어하려고 합니다" 창이 뜨면 허용 (휴대폰 폭 창으로 열어야 옵션 창이 뜸)
+
+시험: `python3 desktop/listener.py --test "https://leisure-web.yanolja.com/leisure/10367229#hwadam-auto=2026-10-29_16:40_2_dry"`
+(`_dry` 는 구매하기 직전에 멈춤. 날짜·회차는 재고 있는 것으로)

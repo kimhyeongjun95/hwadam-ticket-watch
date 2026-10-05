@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "화담숲 자동 진행",
+  "version": "1.0",
+  "description": "#hwadam-auto=날짜_시간_매수 로 열린 화담숲 상품 페이지에서 주문서까지 자동으로 고른다. 결제는 직접.",
+  "content_scripts": [
+    {
+      "matches": ["https://leisure-web.yanolja.com/leisure/10367229*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
