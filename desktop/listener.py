@@ -26,6 +26,12 @@ LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오는 로컬 포트 
 SSL_CTX = ssl.create_default_context()
 if os.path.exists("/etc/ssl/cert.pem"):
     SSL_CTX.load_verify_locations("/etc/ssl/cert.pem")
+# 회사 망처럼 TLS 를 가로채는 프록시 뒤라면 그 CA 묶음도 읽는다.
+# 프록시 인증서는 파이썬 3.13 의 엄격 검사(Authority Key Identifier 필수)에 걸려서 그때는 그 검사를 끈다.
+EXTRA_CA = os.path.expanduser(os.environ.get("EXTRA_CA_FILE", "~/.local/share/corp-ca.pem"))
+if os.path.exists(EXTRA_CA):
+    SSL_CTX.load_verify_locations(EXTRA_CA)
+    SSL_CTX.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
 
 def log(msg):
