@@ -18,6 +18,8 @@ PRODUCT_URL = "https://leisure-web.yanolja.com/leisure/10367229"
 # NOL 앱 안에서 상품 페이지를 바로 여는 주소 (사이트가 쓰는 webView 링크와 같은 형식)
 APP_PRODUCT_URL = f"nol-app://wv?url={PRODUCT_URL}"
 QUANTITY = int(os.environ.get("QUANTITY", "2"))  # 이 매수 이상 남은 회차를 알림에서 앞세운다
+# 이 시각 전에 입장하는 회차만 노린다. 이후 회차는 재고가 생겨도 알리지 않는다 (기록에는 남김)
+LATEST_TIME = os.environ.get("LATEST_TIME", "15:00")
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
 API_HEADERS = {
@@ -71,20 +73,21 @@ def api(path):
 
 
 def fetch(dates):
-    """날짜별 {status, slots:[(시간, 수량)]}"""
+    """날짜별 {status, slots:[(시간, 수량)], rounds_ok}"""
     schedules = api(f"/schedules?startDate={min(dates)}&endDate={max(dates)}")
     status = {s["date"]: s["scheduleStatusCode"] for s in schedules}
     result = {}
     for d in dates:
         st = status.get(d, "UNKNOWN")
-        slots = []
+        slots, rounds_ok = [], False
         if st == "IN_SALE":
             try:
                 slots = [(r["time"], r["inventoryQuantity"]) for r in api(f"/rounds?date={d}")
                          if r["inventoryQuantity"] > 0]
+                rounds_ok = True
             except Exception:
                 pass  # 회차 조회가 실패해도 예약 가능 알림은 보낸다
-        result[d] = {"status": st, "slots": slots}
+        result[d] = {"status": st, "slots": slots, "rounds_ok": rounds_ok}
     return result
 
 
@@ -186,24 +189,25 @@ def main():
         print(d, v["status"], v["slots"])
     write_log(now, dates, cur)
 
-    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 하나라도 새로 재고가 생기면 알린다.
+    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 LATEST_TIME 전 회차에 새로 재고가 생기면 알린다.
     # 날짜가 이미 판매중이어도 다른 회차가 새로 열리면 다시 알린다.
-    cur_open = {d: sorted(t for t, q in cur[d]["slots"] if q > 0) for d in dates}
+    cur_open = {d: sorted(t for t, q in cur[d]["slots"] if q > 0 and t < LATEST_TIME) for d in dates}
     opened = {}
     for d in dates:
         new = [t for t in cur_open[d] if t not in prev_open.get(d, [])]
         # 회차 조회가 실패해 회차를 모르면 날짜가 새로 열린 것만이라도 알린다
-        if new or (cur[d]["status"] == "IN_SALE" and prev.get(d) != "IN_SALE"):
+        unknown = cur[d]["status"] == "IN_SALE" and not cur[d]["rounds_ok"] and prev.get(d) != "IN_SALE"
+        if new or unknown:
             opened[d] = new
     if opened:
         lines, target = [], None
         for d, new in opened.items():
             # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
             # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
-            qty = dict(cur[d]["slots"])
+            qty = {t: q for t, q in cur[d]["slots"] if t < LATEST_TIME}
             enough = [f"{t}({q})" for t, q in sorted(qty.items()) if q >= QUANTITY]
             lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
-            lines.append(f"  {QUANTITY}장 이상 남은 회차: {', '.join(enough[:6]) or '없음'}")
+            lines.append(f"  {LATEST_TIME} 전 {QUANTITY}장 이상 남은 회차: {', '.join(enough[:6]) or '없음'}")
             # PC 자동 진행 대상: 새로 열린 회차 중 QUANTITY 장 이상인 가장 이른 것, 없으면 아무 회차나
             if target is None:
                 cands = [t for t in new if qty.get(t, 0) >= QUANTITY] or \
