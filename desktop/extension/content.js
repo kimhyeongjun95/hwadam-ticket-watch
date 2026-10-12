@@ -2,13 +2,12 @@
 // 날짜 → 회차 → 입장권 성인 → 일반 → 매수 → 구매하기 순서로 눌러 주문서를 띄운다. 결제는 사람이 한다.
 // 끝에 _dry 를 붙이면 구매하기 직전에 멈춘다 (시험용).
 // 사이트가 뜨면서 주소의 # 부분을 지워 버려서, 페이지 스크립트보다 먼저(document_start) 읽어 둔다.
+// NOL 로그인이 풀려 있으면 네이버로 로그인하러 갔다가(login.js) 돌아와서 이어 간다.
 (() => {
-  const m = location.hash.match(/^#hwadam-auto=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})_(\d+)(_dry)?$/);
-  if (!m) return;
-  const [, y, mo, d, time, qtyText, dry] = m;
-  const qty = Number(qtyText);
+  const SPEC = /^#hwadam-auto=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})_(\d+)(_dry)?$/;
+  const fromHash = SPEC.test(location.hash) ? location.hash : null;
   // 새로고침해도 다시 돌지 않게 표시를 지운다
-  history.replaceState(null, "", location.pathname + location.search);
+  if (fromHash) history.replaceState(null, "", location.pathname + location.search);
 
   const banner = document.createElement("div");
   banner.style.cssText =
@@ -38,15 +37,32 @@
   const buttons = (sel = "button") => [...document.querySelectorAll(sel)].filter(visible);
 
   async function run() {
+    // 로그인하러 다녀오는 사이 # 이 없어질 수 있어 진행할 회차를 저장소에 맡겨 둔다 (3분 안에 돌아와야 유효)
+    const { pending } = await chrome.storage.local.get("pending");
+    const resumed = pending && Date.now() - pending.at < 3 * 60e3 ? pending : null;
+    const spec = fromHash || resumed?.spec;
+    if (!spec) return;
+    const loginTried = resumed?.spec === spec && resumed.loginTried;
+    if (pending) await chrome.storage.local.remove("pending");
+    const [, y, mo, d, time, qtyText, dry] = spec.match(SPEC);
+    const qty = Number(qtyText);
+
     if (document.readyState === "loading") await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
     say(`${Number(mo)}/${Number(d)} ${time} 성인 ${qty}장 고르는 중…`);
 
-    // 0. 로그인 확인 (안 돼 있으면 구매 단계에서 로그인 창이 뜬다)
+    // 0. 로그인 확인. 풀려 있으면 NOL 로그인 화면으로 보내고, 거기서 login.js 가 '네이버로 시작하기'를 누른다.
+    //    로그인이 끝나면 돌아올 주소에 # 을 붙여 둬서 이 페이지로 돌아와 이어 간다.
+    let loggedIn = true; // 못 읽으면 일단 진행 (안 돼 있으면 구매 단계에서 로그인 창이 뜬다)
     try {
-      const props = JSON.parse(document.getElementById("__NEXT_DATA__").textContent).props.pageProps;
-      if (!props.isLoggedIn) stop("크롬에 NOL 로그인이 안 돼 있어요. 로그인 후 직접 진행해 주세요.");
-    } catch (e) {
-      if (e.message.includes("로그인")) throw e;
+      loggedIn = JSON.parse(document.getElementById("__NEXT_DATA__").textContent).props.pageProps.isLoggedIn;
+    } catch (_) {}
+    if (!loggedIn) {
+      if (loginTried) stop("네이버로 로그인했는데도 NOL 로그인이 안 됐어요. 직접 로그인 후 진행해 주세요.");
+      say("NOL 로그인이 풀려 있어 네이버로 로그인하는 중…");
+      await chrome.storage.local.set({ pending: { spec, at: Date.now(), loginTried: true } });
+      const back = location.origin + location.pathname + spec;
+      location.href = `https://accounts.yanolja.com/?service=yanolja&redirectUrl=${encodeURIComponent(back)}`;
+      return;
     }
 
     // 1. 옵션 창 열기. 버튼은 서버가 그린 HTML 에 먼저 보이지만 React 가 붙기 전에는 눌러도 반응이 없어서,
