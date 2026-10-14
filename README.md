@@ -29,12 +29,13 @@
 
 - 테스트 알림: Actions → watch → Run workflow → "테스트 알림만 보내기" 체크
 - 날짜 변경: `watch.py` 의 `TARGET_DATES` 기본값 수정
-- 노리는 회차: `watch.py` 의 `EARLIEST_TIME`(기본 09:00) 이상 `LATEST_TIME`(기본 15:00) 전, `QUANTITY`(기본 2)장 이상 남은 회차만 알림·자동 진행 대상. 그 밖은 기록에만 남음
+- 노리는 회차: `watch.py` 의 `EARLIEST_TIME`(기본 09:00) 이상 `LATEST_TIME`(기본 15:00) 전, `MIN_QUANTITY`(기본 1)장 이상 남은 회차만 알림·자동 진행 대상. 그 밖은 기록에만 남음
+- 사는 매수: `QUANTITY`(기본 2)장까지. 그만큼 안 남았으면 남은 만큼(1장이라도) 산다. 여러 회차가 같이 열리면 2장이 다 남은 회차를 먼저 고른다
 - 끝나면: Actions → watch → ⋯ → Disable workflow
 
 ## 맥에서 주문서까지 자동으로 띄우기 (선택)
 
-맥이 켜져 있으면 예약 가능 알림을 받아 크롬에서 날짜·회차·성인·일반·2장을 고르고 '구매하기'까지 누른다. 결제는 직접.
+맥이 켜져 있으면 예약 가능 알림을 받아 크롬에서 날짜·회차·성인·일반·매수(2장, 모자라면 남은 만큼)를 고르고 '구매하기'까지 누른다. 결제는 직접.
 
 1. 크롬 `chrome://extensions` → 개발자 모드 → 압축해제된 확장 프로그램 로드 → `desktop/extension`
 2. 그 크롬(마지막으로 쓰는 프로필)에서 **네이버** 로그인, NOL 은 네이버로 한 번 로그인해 둔다.
@@ -68,3 +69,12 @@ GitHub 알림과 같은 회차가 겹치면 크롬은 10분 안에 한 번만 �
 
 시험: `python3 desktop/listener.py --test "https://leisure-web.yanolja.com/leisure/10367229#hwadam-auto=2026-10-29_16:40_2_dry"`
 (`_dry` 는 구매하기 직전에 멈춤. 날짜·회차는 재고 있는 것으로)
+
+## 다른 맥에서 이 저장소에 커밋할 때
+
+clone 직후 저장소 안에서 개인 계정으로 맞춘다 (전역 설정이 회사 계정이어도 이 저장소만 바뀜).
+
+```
+git config user.name kimhyeongjun95
+git config user.email hjthelegend@naver.com
+```

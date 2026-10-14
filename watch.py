@@ -17,9 +17,11 @@ from datetime import date, datetime, timedelta, timezone
 PRODUCT_URL = "https://leisure-web.yanolja.com/leisure/10367229"
 # NOL 앱 안에서 상품 페이지를 바로 여는 주소 (사이트가 쓰는 webView 링크와 같은 형식)
 APP_PRODUCT_URL = f"nol-app://wv?url={PRODUCT_URL}"
-# EARLIEST_TIME 이상 LATEST_TIME 전에 입장하고 QUANTITY 장 이상 남은 회차만 노린다.
+# EARLIEST_TIME 이상 LATEST_TIME 전에 입장하고 MIN_QUANTITY 장 이상 남은 회차만 노린다.
 # 그 밖의 회차는 재고가 생겨도 알리지 않는다 (기록에는 남김)
+# 살 때는 QUANTITY 장까지, 그만큼 안 남았으면 남은 만큼 산다
 QUANTITY = int(os.environ.get("QUANTITY", "2"))
+MIN_QUANTITY = int(os.environ.get("MIN_QUANTITY", "1"))
 EARLIEST_TIME = os.environ.get("EARLIEST_TIME", "09:00")
 LATEST_TIME = os.environ.get("LATEST_TIME", "15:00")
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
@@ -159,10 +161,10 @@ def write_log(now, dates, cur=None, error=None):
 def find_opened(dates, cur, prev, prev_open):
     """노리는 회차 중 새로 열린 게 있으면 알림 (제목, 본문, PC 자동 진행 주소)을 만든다.
     prev / prev_open: 지난번 날짜별 상태 / 노리는 회차. 돌려주는 cur_open 이 다음 번 prev_open 이 된다."""
-    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 노리는 회차에 QUANTITY 장 이상 새로 생기면 알린다.
+    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 노리는 회차에 MIN_QUANTITY 장 이상 새로 생기면 알린다.
     # 날짜가 이미 판매중이어도 다른 회차가 새로 열리면 다시 알린다.
     cur_open = {d: sorted(t for t, q in cur[d]["slots"]
-                          if q >= QUANTITY and EARLIEST_TIME <= t < LATEST_TIME) for d in dates}
+                          if q >= MIN_QUANTITY and EARLIEST_TIME <= t < LATEST_TIME) for d in dates}
     opened = {}
     for d in dates:
         new = [t for t in cur_open[d] if t not in prev_open.get(d, [])]
@@ -177,15 +179,17 @@ def find_opened(dates, cur, prev, prev_open):
             # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
             qty = dict(cur[d]["slots"])
             lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
-            lines.append(f"  {EARLIEST_TIME}~{LATEST_TIME} {QUANTITY}장 이상 남은 회차: "
+            lines.append(f"  {EARLIEST_TIME}~{LATEST_TIME} {MIN_QUANTITY}장 이상 남은 회차: "
                          f"{', '.join(f'{t}({qty[t]})' for t in cur_open[d][:6]) or '없음'}")
-            # PC 자동 진행 대상: 새로 열린 회차 중 가장 이른 것
-            if target is None and new:
-                target = (d, new[0])
+            # PC 자동 진행 대상: 새로 열린 회차 중 QUANTITY 장이 다 남은 가장 이른 것, 없으면 그냥 가장 이른 것
+            best = next((t for t in new if qty[t] >= QUANTITY), None)
+            if new and (target is None or (best and target[2] < QUANTITY)):
+                t = best or new[0]
+                target = (d, t, min(qty[t], QUANTITY))
         lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
-        pc_url = f"{PRODUCT_URL}#hwadam-auto={target[0]}_{target[1]}_{QUANTITY}" if target else None
+        pc_url = f"{PRODUCT_URL}#hwadam-auto={target[0]}_{target[1]}_{target[2]}" if target else None
         if pc_url:
-            lines.append(f"맥이 켜져 있으면 {label(target[0])} {target[1]} 성인 {QUANTITY}장 주문서를 띄워요.")
+            lines.append(f"맥이 켜져 있으면 {label(target[0])} {target[1]} 성인 {target[2]}장 주문서를 띄워요.")
         return cur_open, (f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), pc_url)
     return cur_open, None
 

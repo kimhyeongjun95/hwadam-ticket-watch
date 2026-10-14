@@ -115,7 +115,9 @@
       plus.click();
       await sleep(300);
     }
-    if (Number(input.value) !== qty) stop(`${qty}장으로 못 맞췄어요 (지금 ${input.value}장). 남은 수량이 모자랄 수 있어요.`);
+    // 알림 뒤 그새 표가 줄었으면 남은 만큼(1장이라도) 산다
+    if (Number(input.value) < 1) stop(`매수를 1장으로도 못 맞췄어요 (지금 ${input.value}장).`);
+    if (Number(input.value) < qty) say(`${qty}장까지는 안 남아서 ${input.value}장으로 진행해요.`);
 
     // 7. 구매하기 — 매수 입력칸과 같은 창 안의 버튼
     let box = input.parentElement, buy = null;
