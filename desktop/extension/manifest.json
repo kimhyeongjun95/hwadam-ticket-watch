@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "화담숲 자동 진행",
-  "version": "1.6",
+  "version": "1.7",
   "description": "#hwadam-auto=날짜_시간_매수 로 열린 화담숲 상품 페이지에서 주문서까지 자동으로 고른다. 로그인이 풀려 있으면 네이버로 다시 로그인. 결제는 직접.",
   "background": { "service_worker": "background.js" },
   "permissions": ["storage", "debugger"],

@@ -35,6 +35,13 @@
     return stop(`${what}을(를) 찾지 못했어요. 직접 진행해 주세요.`);
   }
   const buttons = (sel = "button") => [...document.querySelectorAll(sel)].filter(visible);
+  // 막 그려진 달력·회차는 재고를 받아오기 전이거나 (창이 안 보여) 늦게 그려져 잠깐 막혀 보일 수 있어서,
+  // 막혀 있으면 2초까지 다시 보고 판단한다. 진짜 품절이면 2초 늦게 멈출 뿐
+  async function settle(find, ok, ms = 2000) {
+    let el = find();
+    for (const end = Date.now() + ms; !(el && ok(el)) && Date.now() < end; el = find()) await sleep(150);
+    return el;
+  }
 
   async function run() {
     // 로그인하러 다녀오는 사이 # 이 없어질 수 있어 진행할 회차를 저장소에 맡겨 둔다 (3분 안에 돌아와야 유효)
@@ -84,21 +91,27 @@
 
     // 2. 날짜 — 달력 칸은 <button><abbr aria-label="2026년 10월 31일">31</abbr></button>
     const dayLabel = `${y}년 ${Number(mo)}월 ${Number(d)}일`;
+    const findDay = () => [...document.querySelectorAll(`abbr[aria-label="${dayLabel}"]`)].map((a) => a.closest("button")).find(visible);
     let day = null;
     for (let i = 0; i < 4 && !day; i++) {
-      day = [...document.querySelectorAll(`abbr[aria-label="${dayLabel}"]`)].map((a) => a.closest("button")).find(visible);
+      day = findDay();
       if (!day) {
         document.querySelector('button[aria-label="다음 날짜로 이동"]')?.click();
         await sleep(500);
       }
     }
     if (!day) stop(`달력에서 ${dayLabel}을 못 찾았어요.`);
+    day = (await settle(findDay, (e) => !e.disabled)) || findDay() || day;
     if (day.disabled) stop(`${dayLabel}은 그새 품절됐어요.`);
     day.click();
 
     // 3. 회차 — <button role="option" aria-label="14:00 선택">14:00 3매</button>, 품절이면 '마감'
-    const slot = await waitFor(() => document.querySelector(`button[role="option"][aria-label="${time} 선택"]`), `${time} 회차`);
-    if (slot.disabled || /마감/.test(text(slot))) stop(`${time} 회차가 그새 마감됐어요. 다른 회차를 직접 골라 주세요.`);
+    const findSlot = () => document.querySelector(`button[role="option"][aria-label="${time} 선택"]`);
+    await waitFor(findSlot, `${time} 회차`);
+    const open = (e) => !e.disabled && !/마감/.test(text(e));
+    const slot = (await settle(findSlot, open)) || findSlot();
+    if (!slot) stop(`${time} 회차가 목록에서 사라졌어요. 다른 회차를 직접 골라 주세요.`);
+    if (!open(slot)) stop(`${time} 회차가 그새 마감됐어요 ('${text(slot)}'). 다른 회차를 직접 골라 주세요.`);
     slot.click();
 
     // 4. 이용자: 입장권 성인
