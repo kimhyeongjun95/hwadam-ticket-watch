@@ -8,6 +8,7 @@ LOG_DIR 이 있으면 실행마다 결과(날짜.csv)와 API 응답 원문(날�
 import csv
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -17,13 +18,17 @@ from datetime import date, datetime, timedelta, timezone
 PRODUCT_URL = "https://leisure-web.yanolja.com/leisure/10367229"
 # NOL 앱 안에서 상품 페이지를 바로 여는 주소 (사이트가 쓰는 webView 링크와 같은 형식)
 APP_PRODUCT_URL = f"nol-app://wv?url={PRODUCT_URL}"
-# EARLIEST_TIME 이상 LATEST_TIME 전에 입장하고 MIN_QUANTITY 장 이상 남은 회차만 노린다.
-# 그 밖의 회차는 재고가 생겨도 알리지 않는다 (기록에는 남김)
-# 살 때는 QUANTITY 장까지, 그만큼 안 남았으면 남은 만큼 산다
-QUANTITY = int(os.environ.get("QUANTITY", "2"))
-MIN_QUANTITY = int(os.environ.get("MIN_QUANTITY", "1"))
-EARLIEST_TIME = os.environ.get("EARLIEST_TIME", "09:00")
-LATEST_TIME = os.environ.get("LATEST_TIME", "15:00")
+# 노리는 날짜·회차·매수. 실제 값은 GitHub 저장소 변수(Settings → Secrets and variables → Actions → Variables)에 두고
+# 워크플로가 환경변수로 넘긴다. 맥 수신기 화면(http://127.0.0.1:8789/)에서 바꾸면 그 변수를 고친다. 비어 있으면 기본값.
+# TARGET_DATES 날짜의 EARLIEST_TIME 이상 LATEST_TIME 전에 입장하고 MIN_QUANTITY 장 이상 남은 회차만 노린다.
+# 그 밖의 회차는 재고가 생겨도 알리지 않는다 (기록에는 남김). 살 때는 QUANTITY 장까지, 그만큼 안 남았으면 남은 만큼.
+SETTINGS = {  # 이름: (기본값, 설명)
+    "TARGET_DATES": ("2026-10-31,2026-11-01", "날짜"),
+    "EARLIEST_TIME": ("09:00", "시작 시각"),
+    "LATEST_TIME": ("15:00", "끝 시각"),
+    "MIN_QUANTITY": ("1", "최소 남은 표"),
+    "QUANTITY": ("2", "살 매수"),
+}
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
 API_HEADERS = {
@@ -38,12 +43,58 @@ API_HEADERS = {
 
 KST = timezone(timedelta(hours=9))
 QUIET_START, QUIET_END = (0, 0), (7, 30)  # 이 시간대(KST)에는 조회하지 않는다
-TARGET_DATES = [d.strip() for d in os.environ.get("TARGET_DATES", "2026-10-31,2026-11-01").split(",") if d.strip()]
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 LOG_DIR = os.environ.get("LOG_DIR")
 SSL_CONTEXT = None  # 맥 수신기(desktop/listener.py)가 회사 프록시 인증서를 넣은 것으로 바꿔 끼운다
 WEEKDAYS = "월화수목금토일"
 RAW = []  # 이번 실행의 API 응답 원문 (로그용)
+
+
+def parse_settings(values):
+    """설정 문자열들을 검사해 (정리한 값, 잘못된 항목 설명 목록)을 돌려준다. 빈 값·잘못된 값은 기본값으로."""
+    out, errors = {}, []
+    for name, (default, desc) in SETTINGS.items():
+        v = re.sub(r"\s+", "", str(values.get(name) or ""))
+        if name == "TARGET_DATES":
+            ok = bool(v) and all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and _is_date(d) for d in v.split(","))
+            v = ",".join(sorted(set(v.split(",")))) if ok else v
+        elif name.endswith("_TIME"):
+            ok = bool(re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v))  # 회차 시각과 글자로 비교하니 09:00 처럼 두 자리
+        else:
+            ok = v.isdigit() and 1 <= int(v) <= 10
+        if not ok:
+            if v:
+                errors.append(f"{desc} '{v}'")
+            v = default
+        out[name] = v
+    if out["EARLIEST_TIME"] >= out["LATEST_TIME"]:
+        errors.append(f"시작 시각 {out['EARLIEST_TIME']} 이 끝 시각 {out['LATEST_TIME']} 보다 늦음")
+        out["EARLIEST_TIME"], out["LATEST_TIME"] = SETTINGS["EARLIEST_TIME"][0], SETTINGS["LATEST_TIME"][0]
+    return out, errors
+
+
+def _is_date(d):
+    try:
+        date.fromisoformat(d)
+        return True
+    except ValueError:
+        return False
+
+
+def configure(values):
+    """설정을 이 모듈 상수(TARGET_DATES 등)에 반영하고, 잘못된 항목 목록을 돌려준다"""
+    global CURRENT, TARGET_DATES, EARLIEST_TIME, LATEST_TIME, MIN_QUANTITY, QUANTITY
+    v, errors = parse_settings(values)
+    CURRENT = v  # 반영한 설정 문자열 (맥 수신기 화면에 보여 줌)
+    TARGET_DATES = v["TARGET_DATES"].split(",")
+    EARLIEST_TIME, LATEST_TIME = v["EARLIEST_TIME"], v["LATEST_TIME"]
+    MIN_QUANTITY, QUANTITY = int(v["MIN_QUANTITY"]), int(v["QUANTITY"])
+    return errors
+
+
+def describe_settings():
+    return (f"{'·'.join(label(d) for d in TARGET_DATES)} {EARLIEST_TIME}~{LATEST_TIME} 입장, "
+            f"{MIN_QUANTITY}장 이상 남으면 {QUANTITY}장까지")
 
 
 def label(d):
@@ -142,10 +193,11 @@ def write_log(now, dates, cur=None, error=None):
     if LOG_DIR:
         os.makedirs(LOG_DIR, exist_ok=True)
         csv_path = os.path.join(LOG_DIR, f"{now:%Y-%m-%d}.csv")
-        new = not os.path.exists(csv_path)
-        with open(csv_path, "a", newline="") as f:
+        with open(csv_path, "a+", newline="") as f:
+            f.seek(0)
+            headers = [r for r in csv.reader(f) if r and r[0] == header[0]]
             w = csv.writer(f)
-            if new:
+            if not headers or headers[-1] != header:  # 새 파일이거나 날짜 설정이 바뀌어 열이 달라졌으면
                 w.writerow(header)
             w.writerow(row)
         with open(os.path.join(LOG_DIR, f"{now:%Y-%m-%d}.jsonl"), "a") as f:
@@ -244,5 +296,9 @@ def save(state):
         f.write("\n")
 
 
+SETTING_ERRORS = configure(os.environ)
+
 if __name__ == "__main__":
+    for e in SETTING_ERRORS:
+        print(f"::warning title=설정 무시(기본값 사용)::{e}" if os.environ.get("GITHUB_ACTIONS") else f"설정 무시: {e}")
     sys.exit(main())

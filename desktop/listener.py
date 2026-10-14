@@ -6,13 +6,15 @@
 
 맥 조회를 켜 두면 GitHub 의 1분 조회 사이사이에 맥에서도 20초마다 직접 조회해 같은 식으로 알리고 띄운다.
 켜고 끄기는 메뉴 막대 🍁(SwiftBar, desktop/swiftbar) 나 http://127.0.0.1:8789/poll/toggle.
-상태·로그는 http://127.0.0.1:8789/ 에서 본다.
+상태·로그는 http://127.0.0.1:8789/ 에서 본다. 노리는 날짜·회차·매수도 거기서 바꾼다 (GitHub 저장소 변수로 저장해
+GitHub 조회와 맥 조회가 같은 값을 쓴다. GitHub 에서 직접 고친 값도 몇 분 안에 따라감).
 
   python3 desktop/listener.py           # 계속 듣기 (launchd 로 띄우는 게 기본)
   python3 desktop/listener.py --test URL  # 알림 없이 그 주소를 바로 크롬으로 열기
 """
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import sys
@@ -34,7 +36,12 @@ POLL_EVERY = 20  # 초
 REOPEN_AFTER = 10 * 60  # 같은 회차는 이 시간(초) 안에 다시 알려도 크롬을 또 열지 않는다
 LOG_FILE = os.path.expanduser("~/Library/Logs/hwadam-listener.log")  # install.sh 가 launchd 출력을 여기로 보낸다
 DASHBOARD = os.path.join(HERE, "dashboard.html")  # http://127.0.0.1:8789/ 상태·로그 화면
-DAY_LOG_URL = "https://github.com/kimhyeongjun95/hwadam-ticket-watch/blob/logs/{:%Y-%m-%d}.csv"
+REPO = "kimhyeongjun95/hwadam-ticket-watch"
+DAY_LOG_URL = f"https://github.com/{REPO}/blob/logs/{{:%Y-%m-%d}}.csv"
+SETTINGS_CACHE = os.path.join(ROOT, ".settings.json")  # GitHub 변수와 마지막으로 맞춘 설정 (못 붙을 때도 같은 기준으로 돌게)
+SETTINGS_SYNC = 5 * 60  # 초. 이만큼마다 GitHub 변수를 다시 읽는다
+# launchd 로 뜨면 PATH 가 짧아 Homebrew 의 gh 를 못 찾으니 흔한 위치도 본다
+GH = shutil.which("gh") or next((p for p in ("/usr/local/bin/gh", "/opt/homebrew/bin/gh") if os.path.exists(p)), None)
 # python.org 파이썬은 인증서 묶음이 없어 HTTPS 가 실패하니 macOS 시스템 인증서를 쓴다
 SSL_CTX = ssl.create_default_context()
 if os.path.exists("/etc/ssl/cert.pem"):
@@ -76,6 +83,8 @@ last_poll = ""  # 맥 조회 마지막 결과 (/poll 과 상태 화면에 보여
 last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막대에 띄움
 paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
 opened_lock = threading.Lock()
+settings_lock = threading.Lock()
+settings_sync = {"at": "", "error": ""}  # GitHub 변수와 마지막으로 맞춘 시각, 실패 이유
 
 
 def claim(url):
@@ -125,6 +134,78 @@ def tail(path, n=1000):
         return []
 
 
+def gh(*args):
+    if not GH:
+        raise RuntimeError("gh 명령을 못 찾음 (brew install gh, gh auth login)")
+    r = subprocess.run([GH, *args, "-R", REPO], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"gh {' '.join(args[:2])} 실패")
+    return r.stdout
+
+
+def apply_settings(values, source):
+    """설정을 맥 조회(watch 모듈)에 반영하고 캐시에 남긴다. 잘못된 항목 목록을 돌려준다"""
+    before = dict(watch.CURRENT)
+    errors = watch.configure(values)
+    if watch.CURRENT != before:
+        log(f"설정 바뀜 ({source}): {watch.describe_settings()}")
+    with open(SETTINGS_CACHE, "w") as f:
+        json.dump(watch.CURRENT, f, ensure_ascii=False, indent=1)
+    return errors
+
+
+def load_settings():
+    """시작할 때는 지난번에 맞춘 값부터 쓴다. 곧이어 settings_loop 가 GitHub 변수와 맞춘다"""
+    try:
+        with open(SETTINGS_CACHE) as f:
+            watch.configure(json.load(f))
+    except (FileNotFoundError, ValueError):
+        pass
+
+
+def pull_settings():
+    """GitHub 저장소 변수를 읽어 맞춘다 (폰으로 GitHub 에서 고친 값도 따라간다)"""
+    with settings_lock:
+        try:
+            rows = json.loads(gh("variable", "list", "--json", "name,value"))
+            values = {r["name"]: r["value"] for r in rows if r["name"] in watch.SETTINGS}
+            errors = apply_settings(values, "GitHub")
+            settings_sync.update(at=f"{datetime.now():%H:%M:%S}",
+                                 error="; ".join(f"GitHub 변수 {e} 는 잘못돼서 기본값을 씀" for e in errors))
+        except Exception as e:
+            if not settings_sync["error"].startswith("GitHub 변수를 못 읽음"):
+                log(f"설정: GitHub 변수를 못 읽음 {e}")
+            settings_sync["error"] = f"GitHub 변수를 못 읽음: {e}"
+
+
+def push_settings(values):
+    """화면에서 저장: 검사 → GitHub 변수 → 맥 조회 순서. 잘못된 항목이 있으면 아무것도 안 바꾸고 그 목록을 돌려준다"""
+    v, errors = watch.parse_settings(values)
+    if errors:
+        return errors
+    with settings_lock:
+        on_github = {r["name"]: r["value"] for r in json.loads(gh("variable", "list", "--json", "name,value"))}
+        for name, value in v.items():
+            if on_github.get(name) != value:  # 바뀐 것만 고친다 (하나에 1초 가까이 걸림)
+                gh("variable", "set", name, "--body", value)
+        apply_settings(v, "맥 화면")
+        settings_sync.update(at=f"{datetime.now():%H:%M:%S}", error="")
+    return []
+
+
+def settings_loop():
+    while True:
+        pull_settings()
+        time.sleep(SETTINGS_SYNC)
+
+
+def settings_view():
+    return {"values": watch.CURRENT, "describe": watch.describe_settings(),
+            "fields": {k: {"default": d, "label": desc} for k, (d, desc) in watch.SETTINGS.items()},
+            "synced_at": settings_sync["at"], "error": settings_sync["error"],
+            "github_url": f"https://github.com/{REPO}/settings/variables/actions"}
+
+
 def swiftbar_menu():
     """메뉴 막대 플러그인(desktop/swiftbar)이 그대로 찍는 SwiftBar 메뉴. 첫 줄이 막대 제목, --- 아래가 펼친 메뉴"""
     on, now = poll_on(), time.time()
@@ -144,13 +225,14 @@ def swiftbar_menu():
         elif watch.in_quiet_hours(datetime.now(watch.KST)):
             menu.append("밤 00:00~07:30 은 쉼")
         menu.append(f"마지막 조회 {poll}" if poll else "곧 첫 조회")
+    menu.append(f"노림: {watch.describe_settings()}")
     if alert:
         menu.append(f"최근 알림 {alert}")
     curl = f"bash=/usr/bin/curl param1=-s param2=http://127.0.0.1:{LOG_PORT}/poll/{'off' if on else 'on'}"
     menu += ["---",
              f"{'끄기 (GitHub 1분 조회만 남김)' if on else '켜기'} | {curl} terminal=false refresh=true",
              "---",
-             f"로그 화면 | href=http://127.0.0.1:{LOG_PORT}/",
+             f"로그·설정 화면 | href=http://127.0.0.1:{LOG_PORT}/",
              f"상품 페이지 | href={watch.PRODUCT_URL}",
              f"GitHub 오늘 조회 기록 | href={DAY_LOG_URL.format(datetime.now(watch.KST))}"]
     return "\n".join(menu)
@@ -160,7 +242,8 @@ class LocalServer(BaseHTTPRequestHandler):
     """POST /log {"log": "..."}: 확장이 보낸 진행 상황을 이 로그에 남긴다.
     GET /: 상태·로그 화면 (dashboard.html), /api/state: 그 화면이 3초마다 읽는 JSON
     GET /poll (상태) · /poll/toggle · /poll/on · /poll/off: 맥 조회를 켜고 끈다.
-    GET /swiftbar: 메뉴 막대 🍁 내용"""
+    GET /swiftbar: 메뉴 막대 🍁 내용
+    GET /api/settings: 노리는 날짜·회차·매수, POST /api/settings: 바꾸기 (GitHub 변수까지)"""
 
     def do_GET(self):
         path = self.path.split("?")[0].rstrip("/") or "/"
@@ -177,11 +260,16 @@ class LocalServer(BaseHTTPRequestHandler):
             self.reply(body.encode(), "text/plain")
         elif path == "/swiftbar":
             self.reply(swiftbar_menu().encode(), "text/plain")
+        elif path == "/api/settings":
+            self.reply_json(settings_view())
         else:
             self.send_error(404)
 
-    def reply(self, body, content_type):
-        self.send_response(200)
+    def reply_json(self, obj, status=200):
+        self.reply(json.dumps(obj, ensure_ascii=False).encode(), "application/json", status)
+
+    def reply(self, body, content_type, status=200):
+        self.send_response(status)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -189,6 +277,8 @@ class LocalServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.split("?")[0] == "/api/settings":
+            return self.save_settings()
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             log(f"확장: {body.get('log')}")
@@ -196,6 +286,23 @@ class LocalServer(BaseHTTPRequestHandler):
             log(f"확장 로그 읽기 실패: {e!r}")
         self.send_response(204)
         self.end_headers()
+
+    def save_settings(self):
+        # 아무 웹페이지나 이 주소로 설정을 바꾸지 못하게, 이 화면에서 JSON 으로 보낸 요청만 받는다
+        # (다른 사이트가 JSON 으로 보내려면 브라우저가 먼저 허락을 묻는데 여기서는 답하지 않으니 막힌다)
+        origin = self.headers.get("Origin")
+        if origin not in (None, f"http://127.0.0.1:{LOG_PORT}") or \
+                not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            return self.reply_json({"ok": False, "errors": ["이 화면에서만 바꿀 수 있어요"]}, 403)
+        try:
+            values = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            errors = push_settings(values)
+        except Exception as e:
+            log(f"설정 저장 실패: {e}")
+            return self.reply_json({"ok": False, "errors": [f"GitHub 변수 저장 실패: {e}"], **settings_view()}, 502)
+        if errors:
+            return self.reply_json({"ok": False, "errors": [f"{e} 이(가) 잘못됐어요" for e in errors], **settings_view()}, 400)
+        self.reply_json({"ok": True, **settings_view()})
 
     def log_message(self, *args):
         pass  # 접속 기록은 남기지 않는다
@@ -305,7 +412,9 @@ def main():
         return
     with open(TOPIC_FILE) as f:
         topic = f.read().strip()
+    load_settings()
     serve_local()
+    threading.Thread(target=settings_loop, daemon=True).start()
     threading.Thread(target=poll_loop, args=(topic,), daemon=True).start()
     listen(topic)
 

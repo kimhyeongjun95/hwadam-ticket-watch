@@ -3,3 +3,4 @@ __pycache__/
 logs/
 .local-poll
 .DS_Store
+.settings.json

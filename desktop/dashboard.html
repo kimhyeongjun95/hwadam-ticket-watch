@@ -44,6 +44,17 @@
   .logs .err { color: var(--err); }
   .logs .conn { color: var(--muted); }
   .hide-conn .conn { display: none; }
+  .settings { display: grid; gap: 10px; margin: 0; }
+  .settings .field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .settings .name { width: 7.5em; color: var(--muted); }
+  input[type="date"], input[type="time"], input[type="number"] {
+    font: inherit; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); }
+  input[type="number"] { width: 4.5em; }
+  .date { display: inline-flex; gap: 4px; align-items: center; }
+  .date button, #addDate { padding: 2px 8px; font-weight: 400; }
+  .ok { color: var(--on); }
+  .bad { color: var(--err); }
   .only-key div:not(.alert):not(.ext):not(.err) { display: none; }
 </style>
 </head>
@@ -61,6 +72,30 @@
       <a href="https://leisure-web.yanolja.com/leisure/10367229" target="_blank" rel="noopener">상품 페이지 ↗</a>
     </div>
     <p id="last" class="muted" style="margin:10px 0 0"></p>
+  </section>
+
+  <section class="card" id="settings">
+    <div class="row logs-head">
+      <strong>노리는 것</strong>
+      <span id="setSync" class="muted"></span>
+    </div>
+    <p id="setDescribe" style="margin:0 0 12px"></p>
+    <form id="setForm" class="settings">
+      <div class="field"><span class="name">날짜</span><span id="dates" class="row" style="gap:8px"></span>
+        <button type="button" id="addDate">+ 날짜</button></div>
+      <div class="field"><span class="name">입장 시각</span>
+        <input type="time" id="EARLIEST_TIME" required> 이상 <input type="time" id="LATEST_TIME" required> 전</div>
+      <div class="field"><span class="name">최소 남은 표</span>
+        <input type="number" id="MIN_QUANTITY" min="1" max="10" required> 장 이상 남으면 알림·자동 예약</div>
+      <div class="field"><span class="name">살 매수</span>
+        <input type="number" id="QUANTITY" min="1" max="10" required> 장까지 (모자라면 남은 만큼)</div>
+      <div class="row">
+        <button type="submit" id="save">저장</button>
+        <span id="setMsg"></span>
+        <span class="spacer"></span>
+        <a id="ghVars" target="_blank" rel="noopener">GitHub 변수 ↗</a>
+      </div>
+    </form>
   </section>
 
   <section class="card">
@@ -125,6 +160,67 @@
       $("pill").className = "pill";
     }
   }
+
+  // 노리는 것: GitHub 저장소 변수에 저장돼 GitHub 조회·맥 조회가 같이 쓴다
+  const FIELDS = ["EARLIEST_TIME", "LATEST_TIME", "MIN_QUANTITY", "QUANTITY"];
+  let dirty = false;  // 고치는 중에는 1분마다 다시 읽어도 칸을 덮어쓰지 않는다
+
+  function dateRow(value) {
+    const wrap = document.createElement("span");
+    wrap.className = "date";
+    const input = Object.assign(document.createElement("input"), { type: "date", value, required: true });
+    const del = Object.assign(document.createElement("button"), { type: "button", textContent: "✕", title: "이 날짜 빼기" });
+    del.onclick = () => { wrap.remove(); dirty = true; };
+    wrap.append(input, del);
+    return wrap;
+  }
+
+  function showSettings(s, force) {
+    $("setDescribe").textContent = s.describe;
+    $("ghVars").href = s.github_url;
+    $("setSync").textContent = s.error || (s.synced_at ? `GitHub 와 맞춤 ${s.synced_at}` : "GitHub 와 맞추는 중…");
+    $("setSync").className = s.error ? "bad" : "muted";
+    if (dirty && !force) return;
+    $("dates").replaceChildren(...s.values.TARGET_DATES.split(",").map(dateRow));
+    for (const k of FIELDS) $(k).value = s.values[k];
+    dirty = false;
+  }
+
+  async function loadSettings(force) {
+    try { showSettings(await (await fetch("/api/settings", { cache: "no-store" })).json(), force); } catch (e) {}
+  }
+
+  $("setForm").oninput = () => { dirty = true; };
+  $("addDate").onclick = () => { $("dates").append(dateRow("")); dirty = true; };
+  $("setForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const dates = [...$("dates").querySelectorAll("input")].map((i) => i.value).filter(Boolean);
+    if (!dates.length) { $("setMsg").textContent = "날짜를 하나 이상 넣어 주세요"; $("setMsg").className = "bad"; return; }
+    const body = { TARGET_DATES: dates.join(",") };
+    for (const k of FIELDS) body[k] = $(k).value;
+    $("save").disabled = true;
+    $("setMsg").textContent = "GitHub 변수에 저장하는 중…";
+    $("setMsg").className = "muted";
+    try {
+      const r = await (await fetch("/api/settings", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+      if (r.ok) {
+        showSettings(r, true);
+        $("setMsg").textContent = "저장했어요. 맥 조회는 바로, GitHub 조회는 다음 실행(1분 안)부터 적용돼요";
+        $("setMsg").className = "ok";
+      } else {
+        if (r.describe) showSettings(r, false);
+        $("setMsg").textContent = r.errors.join(" · ");
+        $("setMsg").className = "bad";
+      }
+    } catch (err) {
+      $("setMsg").textContent = "수신기에 연결이 안 돼요";
+      $("setMsg").className = "bad";
+    }
+    $("save").disabled = false;
+  };
+  loadSettings(true);
+  setInterval(loadSettings, 60000);
 
   $("toggle").onclick = async () => { await fetch("/poll/toggle", { cache: "no-store" }); refresh(); };
   $("onlyKey").onchange = (e) => $("logs").classList.toggle("only-key", e.target.checked);

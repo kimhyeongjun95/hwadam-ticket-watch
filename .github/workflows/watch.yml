@@ -42,6 +42,12 @@ jobs:
           FORCE: ${{ inputs.force && '1' || '' }}
           NOTIFY_TEST: ${{ inputs.test_notify && '1' || '' }}
           LOG_DIR: logs
+          # 노리는 날짜·회차·매수는 저장소 변수(맥 수신기 화면에서 고침). 비어 있으면 watch.py 기본값
+          TARGET_DATES: ${{ vars.TARGET_DATES }}
+          EARLIEST_TIME: ${{ vars.EARLIEST_TIME }}
+          LATEST_TIME: ${{ vars.LATEST_TIME }}
+          MIN_QUANTITY: ${{ vars.MIN_QUANTITY }}
+          QUANTITY: ${{ vars.QUANTITY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
