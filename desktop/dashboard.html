@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>화담숲 감시 · 맥</title>
+<!-- listener.py 가 http://127.0.0.1:8789/ 로 보여 주는 맥 수신기 상태·로그 화면 -->
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --line: #e3e6ea; --text: #1d2228; --muted: #6b7480;
+    --on: #0f8a4b; --on-bg: #e3f6ec; --off: #6b7480; --off-bg: #eceef1;
+    --alert: #b45309; --alert-bg: #fff4e0; --ext: #1d5fbf; --err: #c0262d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171b; --card: #1c2026; --line: #2c323a; --text: #e6e9ed; --muted: #8b949e;
+      --on: #3fcf7f; --on-bg: #133224; --off: #8b949e; --off-bg: #262b32;
+      --alert: #f5a524; --alert-bg: #3a2a0c; --ext: #6ea8ff; --err: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .pill { font-weight: 700; padding: 4px 12px; border-radius: 999px; background: var(--off-bg); color: var(--off); }
+  .pill.on { background: var(--on-bg); color: var(--on); }
+  button { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  .muted { color: var(--muted); }
+  .spacer { flex: 1; }
+  a { color: var(--ext); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .logs-head { justify-content: space-between; margin-bottom: 8px; }
+  .logs-head label { color: var(--muted); user-select: none; }
+  .logs { overflow-x: auto; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .logs div { display: flex; gap: 12px; white-space: pre; padding: 1px 4px; border-radius: 4px; }
+  .logs time { color: var(--muted); flex: none; width: 9.5em; }
+  .logs .alert { background: var(--alert-bg); color: var(--alert); font-weight: 600; }
+  .logs .ext { color: var(--ext); }
+  .logs .err { color: var(--err); }
+  .logs .conn { color: var(--muted); }
+  .hide-conn .conn { display: none; }
+  .only-key div:not(.alert):not(.ext):not(.err) { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>화담숲 감시 · 맥</h1>
+
+  <section class="card">
+    <div class="row">
+      <span>맥 20초 조회</span>
+      <span id="pill" class="pill">…</span>
+      <button id="toggle" type="button">…</button>
+      <span class="spacer"></span>
+      <a id="gh" target="_blank" rel="noopener">GitHub 오늘 조회 기록 ↗</a>
+      <a href="https://leisure-web.yanolja.com/leisure/10367229" target="_blank" rel="noopener">상품 페이지 ↗</a>
+    </div>
+    <p id="last" class="muted" style="margin:10px 0 0"></p>
+  </section>
+
+  <section class="card">
+    <div class="row logs-head">
+      <strong>수신기 로그 <span class="muted" style="font-weight:400">(최근 1000줄, 새것이 위 · 맥 조회는 상태가 바뀔 때만 남음)</span></strong>
+      <div class="row">
+        <label><input type="checkbox" id="onlyKey"> 알림·확장·오류만</label>
+        <label><input type="checkbox" id="hideConn" checked> 연결 로그 숨기기</label>
+      </div>
+    </div>
+    <div id="logs" class="logs hide-conn"></div>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const today = new Date();
+  const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  $("gh").href = `https://github.com/kimhyeongjun95/hwadam-ticket-watch/blob/logs/${ymd}.csv`;
+
+  // 연결 끊김은 맥이 잠들거나 망이 바뀔 때마다 쌓이는 잡음이라 오류보다 먼저 걸러 둔다
+  const kind = (msg) =>
+    /^연결/.test(msg) ? "conn"
+    : /예약 가능|주문서|구매하기 누름/.test(msg) ? "alert"
+    : /실패|못 |안 돼|않|쉼|마감|품절됐/.test(msg) ? "err"
+    : /^확장:/.test(msg) ? "ext" : "";
+
+  // last_poll 은 "13:45:43 10/31(토) 품절, …" 처럼 시각으로 시작한다. 20초마다 도는지 바로 보이게 몇 초 전인지 붙인다
+  function ago(lastPoll) {
+    const m = lastPoll.match(/^(\d\d):(\d\d):(\d\d)/);
+    if (!m) return "";
+    const t = new Date();
+    t.setHours(+m[1], +m[2], +m[3], 0);
+    const sec = Math.round((Date.now() - t) / 1000);
+    return sec >= 0 && sec < 3600 ? ` (${sec}초 전)` : "";
+  }
+
+  function render(lines) {
+    const box = $("logs");
+    box.replaceChildren(...lines.slice().reverse().map((line) => {
+      const m = line.match(/^(\d\d\/\d\d \d\d:\d\d:\d\d) (.*)$/);
+      const row = document.createElement("div");
+      const t = document.createElement("time");
+      const span = document.createElement("span");
+      t.textContent = m ? m[1] : "";
+      span.textContent = m ? m[2] : line;
+      row.className = kind(span.textContent);
+      row.append(t, span);
+      return row;
+    }));
+  }
+
+  async function refresh() {
+    try {
+      const s = await (await fetch("/api/state", { cache: "no-store" })).json();
+      $("pill").textContent = s.status;
+      $("pill").className = "pill" + (s.on ? " on" : "");
+      $("toggle").textContent = s.on ? "끄기" : "켜기";
+      $("last").textContent = s.on ? (s.last_poll ? `마지막 조회 ${s.last_poll}${ago(s.last_poll)}` : "곧 첫 조회") : "꺼져 있으면 GitHub 1분 조회만 돈다";
+      render(s.lines);
+    } catch (e) {
+      $("pill").textContent = "수신기 연결 안 됨";
+      $("pill").className = "pill";
+    }
+  }
+
+  $("toggle").onclick = async () => { await fetch("/poll/toggle", { cache: "no-store" }); refresh(); };
+  $("onlyKey").onchange = (e) => $("logs").classList.toggle("only-key", e.target.checked);
+  $("hideConn").onchange = (e) => $("logs").classList.toggle("hide-conn", e.target.checked);
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

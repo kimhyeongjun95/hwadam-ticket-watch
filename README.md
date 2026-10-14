@@ -41,11 +41,30 @@
    NOL 로그인이 풀려 있으면 확장이 NOL 로그인 화면에서 '네이버로 시작하기'를 눌러 다시 로그인하고 이어 간다.
    네이버 로그인 화면까지 뜨면 크롬이 비밀번호를 자동완성해 둔 경우에만 '로그인'을 눌러 준다
    (크롬 디버거로 누르므로 '디버깅 중' 안내 줄이 잠깐 뜸. 자동입력 방지 문자·2단계 인증이 나오면 거기서 멈춤)
-3. `desktop/install.sh` — 로그인할 때마다 `desktop/listener.py` 가 ntfy 를 듣도록 등록 (끄기: `desktop/uninstall.sh`)
-4. 처음 한 번 "python3 이(가) Google Chrome 을 제어하려고 합니다" 창이 뜨면 허용 (휴대폰 폭 창으로 열어야 옵션 창이 뜸)
+3. 저장소 맨 위에 `.ntfy-topic` 파일을 만들고 GitHub secret `NTFY_TOPIC` 과 같은 토픽 이름을 한 줄로 넣는다.
+   git 에 올리지 않는 파일이라 새로 clone 한 맥에서는 쓰던 맥의 것을 복사해 온다
+4. `desktop/install.sh` — 로그인할 때마다 `desktop/listener.py` 가 ntfy 를 듣도록 등록 (끄기: `desktop/uninstall.sh`).
+   SwiftBar 가 깔려 있으면 메뉴 막대 🍁 도 같이 넣는다 (아래)
+5. 처음 한 번 "python3 이(가) Google Chrome 을 제어하려고 합니다" 창이 뜨면 허용 (휴대폰 폭 창으로 열어야 옵션 창이 뜸)
+
+회사 망처럼 HTTPS 를 가로채는 프록시 뒤라면 그 루트 인증서를 `~/.local/share/corp-ca.pem` 에 두면 수신기가 같이 읽는다.
+여러 맥에 깔면 알림이 올 때 켜져 있는 맥마다 크롬을 연다.
 
 진행 상황은 확장이 수신기로 보내서 `~/Library/Logs/hwadam-listener.log` 에 남는다 (`확장: …` 줄).
 확장 파일을 고친 뒤에는 `chrome://extensions` 에서 새로고침(↻) 해야 반영된다.
+
+### 맥에서도 20초마다 조회 (선택)
+
+수신기(`listener.py`)가 GitHub 의 1분 조회 사이사이 맥에서도 20초마다 직접 조회한다. 판정·알림은 `watch.py` 와 같은 코드.
+맥이 켜져 있을 때만 돌고, 켜고 끈 상태는 `.local-poll` 파일로 남아 재부팅해도 유지된다.
+GitHub 알림과 같은 회차가 겹치면 크롬은 10분 안에 한 번만 연다. 회사 망이면 회사 IP 로 조회하는 셈이라, 403·429 가 나면 10분 쉰다.
+
+- 메뉴 막대: `brew install --cask swiftbar` 후 `desktop/install.sh` 를 다시 돌리면 메뉴 막대에 🍁 켜짐/꺼짐이 뜬다
+  (10초마다 갱신. 눌러서 켜기/끄기·마지막 조회·로그 화면. 예약 가능 알림 뒤 10분은 🍁 예약 가능!, 403·429 로 쉬는 동안은 🍁 쉼).
+  처음 뜨는 '인터넷에서 다운로드된 앱' 창에서 열기, SwiftBar 설정에서 'Launch at login'을 켜 둔다. 플러그인은 `desktop/swiftbar/hwadam.10s.sh`
+- 상태·로그 화면: <http://127.0.0.1:8789/>
+- 켜기/끄기: `curl 127.0.0.1:8789/poll/toggle` (`/poll/on`, `/poll/off`, 상태·마지막 조회는 `/poll`).
+  단축어 앱에서 'URL 콘텐츠 가져오기'로 이 주소를 부르는 단축어를 만들어 위젯으로 둬도 된다
 
 시험: `python3 desktop/listener.py --test "https://leisure-web.yanolja.com/leisure/10367229#hwadam-auto=2026-10-29_16:40_2_dry"`
 (`_dry` 는 구매하기 직전에 멈춤. 날짜·회차는 재고 있는 것으로)

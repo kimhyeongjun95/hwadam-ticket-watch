@@ -4,6 +4,10 @@
 크롬에 넣은 확장(desktop/extension)이 그 주소의 #hwadam-auto=날짜_시간_매수 를 읽어
 날짜·회차·성인·일반·매수를 고르고 '구매하기'까지 눌러 주문서를 띄운다. 결제는 사람이 한다.
 
+맥 조회를 켜 두면 GitHub 의 1분 조회 사이사이에 맥에서도 20초마다 직접 조회해 같은 식으로 알리고 띄운다.
+켜고 끄기는 메뉴 막대 🍁(SwiftBar, desktop/swiftbar) 나 http://127.0.0.1:8789/poll/toggle.
+상태·로그는 http://127.0.0.1:8789/ 에서 본다.
+
   python3 desktop/listener.py           # 계속 듣기 (launchd 로 띄우는 게 기본)
   python3 desktop/listener.py --test URL  # 알림 없이 그 주소를 바로 크롬으로 열기
 """
@@ -19,9 +23,18 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOPIC_FILE = os.path.join(HERE, "..", ".ntfy-topic")
+ROOT = os.path.join(HERE, "..")
+sys.path.insert(0, ROOT)
+import watch  # noqa: E402  맥 조회도 GitHub 과 같은 조회·판정 코드를 쓴다
+TOPIC_FILE = os.path.join(ROOT, ".ntfy-topic")
 AUTO_MARK = "#hwadam-auto="
-LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오는 로컬 포트 (extension/background.js)
+LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오고, 메뉴 막대·단축어가 맥 조회를 켜고 끄는 로컬 포트
+POLL_FLAG = os.path.join(ROOT, ".local-poll")  # 이 파일이 있으면 맥 조회가 켜진 것 (껐다 켜도 유지)
+POLL_EVERY = 20  # 초
+REOPEN_AFTER = 10 * 60  # 같은 회차는 이 시간(초) 안에 다시 알려도 크롬을 또 열지 않는다
+LOG_FILE = os.path.expanduser("~/Library/Logs/hwadam-listener.log")  # install.sh 가 launchd 출력을 여기로 보낸다
+DASHBOARD = os.path.join(HERE, "dashboard.html")  # http://127.0.0.1:8789/ 상태·로그 화면
+DAY_LOG_URL = "https://github.com/kimhyeongjun95/hwadam-ticket-watch/blob/logs/{:%Y-%m-%d}.csv"
 # python.org 파이썬은 인증서 묶음이 없어 HTTPS 가 실패하니 macOS 시스템 인증서를 쓴다
 SSL_CTX = ssl.create_default_context()
 if os.path.exists("/etc/ssl/cert.pem"):
@@ -58,8 +71,122 @@ end tell'''
                     'with title "화담숲 예약 가능" sound name "Glass"'], check=False)
 
 
-class ExtensionLog(BaseHTTPRequestHandler):
-    """확장이 POST /log {"log": "..."} 로 보낸 진행 상황을 이 로그에 남긴다"""
+opened_at = {}  # PC 자동 진행 주소 → 크롬으로 연 시각
+last_poll = ""  # 맥 조회 마지막 결과 (/poll 과 상태 화면에 보여 줌)
+last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막대에 띄움
+paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
+opened_lock = threading.Lock()
+
+
+def claim(url):
+    """GitHub 알림과 맥 조회가 같은 회차를 겹쳐 알려도 크롬은 한 번만 열도록, 처음이면 True"""
+    with opened_lock:
+        if time.time() - opened_at.get(url, 0) < REOPEN_AFTER:
+            return False
+        opened_at[url] = time.time()
+        return True
+
+
+def note_alert(title):
+    global last_alert
+    last_alert = (time.time(), f"{datetime.now():%m/%d %H:%M} {title}")
+
+
+def notify_mac(text):
+    subprocess.run(["osascript", "-e", f'display notification "{text}" with title "화담숲 감시"'], check=False)
+
+
+def poll_on():
+    return os.path.exists(POLL_FLAG)
+
+
+def set_poll(on):
+    if on:
+        open(POLL_FLAG, "w").close()
+    elif poll_on():
+        os.remove(POLL_FLAG)
+    log(f"맥 조회 {poll_text()}")
+    notify_mac(f"맥 조회 {poll_text()}")
+
+
+def poll_text():
+    return f"켜짐 ({POLL_EVERY}초마다)" if poll_on() else "꺼짐"
+
+
+def tail(path, n=1000):
+    """로그 파일의 마지막 n 줄 (끝 256KB 만 읽는다)"""
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            f.seek(max(0, size - 256 * 1024))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+            return lines[1 if size > 256 * 1024 else 0:][-n:]  # 중간부터 읽었으면 잘린 첫 줄은 버린다
+    except FileNotFoundError:
+        return []
+
+
+def swiftbar_menu():
+    """메뉴 막대 플러그인(desktop/swiftbar)이 그대로 찍는 SwiftBar 메뉴. 첫 줄이 막대 제목, --- 아래가 펼친 메뉴"""
+    on, now = poll_on(), time.time()
+    alert_at, alert = last_alert
+    # SwiftBar 는 | 뒤를 옵션으로 읽으니 조회 결과·알림 제목에 섞인 | 는 바꿔 둔다
+    poll, alert = last_poll.replace("|", "｜"), alert.replace("|", "｜")
+    if now - alert_at < REOPEN_AFTER:
+        title = "🍁 예약 가능! | color=#e5484d"
+    elif on and now < paused_until:
+        title = "🍁 쉼 | color=#d97706"
+    else:
+        title = "🍁 켜짐" if on else "🍁 꺼짐"
+    menu = [title, "---", f"맥 20초 조회 {poll_text()}"]
+    if on:
+        if now < paused_until:
+            menu.append(f"조회가 막혀서 {datetime.fromtimestamp(paused_until):%H:%M} 까지 쉼")
+        elif watch.in_quiet_hours(datetime.now(watch.KST)):
+            menu.append("밤 00:00~07:30 은 쉼")
+        menu.append(f"마지막 조회 {poll}" if poll else "곧 첫 조회")
+    if alert:
+        menu.append(f"최근 알림 {alert}")
+    curl = f"bash=/usr/bin/curl param1=-s param2=http://127.0.0.1:{LOG_PORT}/poll/{'off' if on else 'on'}"
+    menu += ["---",
+             f"{'끄기 (GitHub 1분 조회만 남김)' if on else '켜기'} | {curl} terminal=false refresh=true",
+             "---",
+             f"로그 화면 | href=http://127.0.0.1:{LOG_PORT}/",
+             f"상품 페이지 | href={watch.PRODUCT_URL}",
+             f"GitHub 오늘 조회 기록 | href={DAY_LOG_URL.format(datetime.now(watch.KST))}"]
+    return "\n".join(menu)
+
+
+class LocalServer(BaseHTTPRequestHandler):
+    """POST /log {"log": "..."}: 확장이 보낸 진행 상황을 이 로그에 남긴다.
+    GET /: 상태·로그 화면 (dashboard.html), /api/state: 그 화면이 3초마다 읽는 JSON
+    GET /poll (상태) · /poll/toggle · /poll/on · /poll/off: 맥 조회를 켜고 끈다.
+    GET /swiftbar: 메뉴 막대 🍁 내용"""
+
+    def do_GET(self):
+        path = self.path.split("?")[0].rstrip("/") or "/"
+        if path == "/":
+            with open(DASHBOARD, "rb") as f:
+                self.reply(f.read(), "text/html")
+        elif path == "/api/state":
+            state = {"on": poll_on(), "status": poll_text(), "last_poll": last_poll, "lines": tail(LOG_FILE)}
+            self.reply(json.dumps(state, ensure_ascii=False).encode(), "application/json")
+        elif path in ("/poll", "/poll/toggle", "/poll/on", "/poll/off"):
+            if path != "/poll":
+                set_poll(not poll_on() if path == "/poll/toggle" else path == "/poll/on")
+            body = f"맥 조회 {poll_text()}" + (f"\n마지막 조회 {last_poll}" if poll_on() and last_poll else "")
+            self.reply(body.encode(), "text/plain")
+        elif path == "/swiftbar":
+            self.reply(swiftbar_menu().encode(), "text/plain")
+        else:
+            self.send_error(404)
+
+    def reply(self, body, content_type):
+        self.send_response(200)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         try:
@@ -74,11 +201,11 @@ class ExtensionLog(BaseHTTPRequestHandler):
         pass  # 접속 기록은 남기지 않는다
 
 
-def serve_extension_log():
+def serve_local():
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", LOG_PORT), ExtensionLog)
+        server = ThreadingHTTPServer(("127.0.0.1", LOG_PORT), LocalServer)
     except OSError as e:
-        log(f"확장 로그 서버를 못 띄움 (포트 {LOG_PORT}): {e}")
+        log(f"로컬 서버를 못 띄움 (포트 {LOG_PORT}): {e}")
         return
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -108,11 +235,68 @@ def listen(topic):
                     seen.add(msg["id"])
                     target = pc_url(msg)
                     log(f"알림: {msg.get('title')} → {target or '자동 진행 대상 아님'}")
+                    note_alert(msg.get("title") or "")
                     if target:
-                        open_in_chrome(target)
+                        if claim(target):
+                            open_in_chrome(target)
+                        else:
+                            log("  방금 크롬으로 연 회차라 건너뜀")
         except Exception as e:
             log(f"연결 끊김: {e!r} — 5초 뒤 다시 연결")
             time.sleep(5)
+
+
+def poll_loop(topic):
+    """맥 조회가 켜져 있으면 POLL_EVERY 초마다 직접 조회한다. 판정·알림은 GitHub 과 같은 watch.py 코드."""
+    watch.SSL_CONTEXT = SSL_CTX
+    os.environ["NTFY_TOPIC"] = topic
+    global last_poll, paused_until
+    prev, prev_open, cells, was_on = {}, {}, {}, None
+    while True:
+        started = time.time()
+        try:
+            on = poll_on()
+            if on != was_on:
+                # 켤 때마다 처음부터 본다 = 그때 이미 열려 있는 회차도 한 번 알린다
+                prev, prev_open, cells, was_on, last_poll = {}, {}, {}, on, ""
+            now = datetime.now(watch.KST)
+            if on and not watch.in_quiet_hours(now):
+                dates = [d for d in watch.TARGET_DATES if d >= now.date().isoformat()]
+                watch.RAW.clear()
+                cur = watch.fetch(dates)
+                last_poll = f"{now:%H:%M:%S} " + ", ".join(f"{watch.label(d)} {watch.cell(cur[d])}" for d in dates)
+                for d in dates:  # 날짜별 상태가 바뀔 때만 로그에 남긴다
+                    c = watch.cell(cur[d]) + (f" {[t for t, _ in cur[d]['slots']]}" if cur[d]["slots"] else "")
+                    if cells.get(d) != c:
+                        log(f"맥 조회: {watch.label(d)} {c}")
+                        cells[d] = c
+                cur_open, alert = watch.find_opened(dates, cur, prev, prev_open)
+                if alert:
+                    title, message, url = alert
+                    note_alert(title)
+                    if url and not claim(url):
+                        log(f"맥 조회: {title} — 방금 크롬으로 연 회차라 알림 생략")
+                    else:
+                        log(f"맥 조회: {title}")
+                        try:
+                            watch.notify(title, message + "\n(맥 20초 조회에서 찾음)", 5, pc_url=url)
+                        except Exception as e:  # 폰 알림이 실패해도 크롬은 띄운다
+                            log(f"맥 조회: 폰 알림 실패 {watch.describe(e)}")
+                        if url:
+                            open_in_chrome(url)
+                prev, prev_open = {d: cur[d]["status"] for d in dates}, cur_open
+        except Exception as e:
+            reason = watch.describe(e)
+            log(f"맥 조회 실패: {reason}")
+            last_poll = f"{datetime.now(watch.KST):%H:%M:%S} 조회 실패 {reason}"
+            if reason in ("HTTP 403", "HTTP 429"):
+                # 막히기 시작했으면 같은 IP 로 결제할 크롬까지 막히지 않게 한동안 쉰다
+                log("맥 조회 10분 쉼")
+                started += 10 * 60
+                paused_until = started
+        # 껐다 켜면 바로 반응하도록 잘게 나눠 잔다
+        while time.time() < started + POLL_EVERY and poll_on() == was_on:
+            time.sleep(1)
 
 
 def main():
@@ -121,7 +305,8 @@ def main():
         return
     with open(TOPIC_FILE) as f:
         topic = f.read().strip()
-    serve_extension_log()
+    serve_local()
+    threading.Thread(target=poll_loop, args=(topic,), daemon=True).start()
     listen(topic)
 
 

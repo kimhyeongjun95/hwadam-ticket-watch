@@ -39,6 +39,7 @@ QUIET_START, QUIET_END = (0, 0), (7, 30)  # 이 시간대(KST)에는 조회하�
 TARGET_DATES = [d.strip() for d in os.environ.get("TARGET_DATES", "2026-10-31,2026-11-01").split(",") if d.strip()]
 STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 LOG_DIR = os.environ.get("LOG_DIR")
+SSL_CONTEXT = None  # 맥 수신기(desktop/listener.py)가 회사 프록시 인증서를 넣은 것으로 바꿔 끼운다
 WEEKDAYS = "월화수목금토일"
 RAW = []  # 이번 실행의 API 응답 원문 (로그용)
 
@@ -53,7 +54,7 @@ def http(url, data=None, headers=None, timeout=15):
     req = urllib.request.Request(url, data=body, headers=headers or {})
     if body is not None:
         req.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=SSL_CONTEXT) as r:
         return json.load(r)
 
 
@@ -155,6 +156,40 @@ def write_log(now, dates, cur=None, error=None):
             f.write("| " + " | ".join(row[:-1]) + " |\n")
 
 
+def find_opened(dates, cur, prev, prev_open):
+    """노리는 회차 중 새로 열린 게 있으면 알림 (제목, 본문, PC 자동 진행 주소)을 만든다.
+    prev / prev_open: 지난번 날짜별 상태 / 노리는 회차. 돌려주는 cur_open 이 다음 번 prev_open 이 된다."""
+    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 노리는 회차에 QUANTITY 장 이상 새로 생기면 알린다.
+    # 날짜가 이미 판매중이어도 다른 회차가 새로 열리면 다시 알린다.
+    cur_open = {d: sorted(t for t, q in cur[d]["slots"]
+                          if q >= QUANTITY and EARLIEST_TIME <= t < LATEST_TIME) for d in dates}
+    opened = {}
+    for d in dates:
+        new = [t for t in cur_open[d] if t not in prev_open.get(d, [])]
+        # 회차 조회가 실패해 회차를 모르면 날짜가 새로 열린 것만이라도 알린다
+        unknown = cur[d]["status"] == "IN_SALE" and not cur[d]["rounds_ok"] and prev.get(d) != "IN_SALE"
+        if new or unknown:
+            opened[d] = new
+    if opened:
+        lines, target = [], None
+        for d, new in opened.items():
+            # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
+            # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
+            qty = dict(cur[d]["slots"])
+            lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
+            lines.append(f"  {EARLIEST_TIME}~{LATEST_TIME} {QUANTITY}장 이상 남은 회차: "
+                         f"{', '.join(f'{t}({qty[t]})' for t in cur_open[d][:6]) or '없음'}")
+            # PC 자동 진행 대상: 새로 열린 회차 중 가장 이른 것
+            if target is None and new:
+                target = (d, new[0])
+        lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
+        pc_url = f"{PRODUCT_URL}#hwadam-auto={target[0]}_{target[1]}_{QUANTITY}" if target else None
+        if pc_url:
+            lines.append(f"맥이 켜져 있으면 {label(target[0])} {target[1]} 성인 {QUANTITY}장 주문서를 띄워요.")
+        return cur_open, (f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), pc_url)
+    return cur_open, None
+
+
 def main():
     now = datetime.now(KST)
     if os.environ.get("NOTIFY_TEST"):
@@ -191,34 +226,10 @@ def main():
         print(d, v["status"], v["slots"])
     write_log(now, dates, cur)
 
-    # 회차(하루 27개, 08:00~16:40 20분 간격) 중 노리는 회차에 QUANTITY 장 이상 새로 생기면 알린다.
-    # 날짜가 이미 판매중이어도 다른 회차가 새로 열리면 다시 알린다.
-    cur_open = {d: sorted(t for t, q in cur[d]["slots"]
-                          if q >= QUANTITY and EARLIEST_TIME <= t < LATEST_TIME) for d in dates}
-    opened = {}
-    for d in dates:
-        new = [t for t in cur_open[d] if t not in prev_open.get(d, [])]
-        # 회차 조회가 실패해 회차를 모르면 날짜가 새로 열린 것만이라도 알린다
-        unknown = cur[d]["status"] == "IN_SALE" and not cur[d]["rounds_ok"] and prev.get(d) != "IN_SALE"
-        if new or unknown:
-            opened[d] = new
-    if opened:
-        lines, target = [], None
-        for d, new in opened.items():
-            # 알림 링크로 주문서까지 바로 가는 건 사이트 버그로 막혀 있어(INVALID_LEISURE_TOKEN),
-            # 앱 상품 페이지를 열고 고를 회차를 알려 준다.
-            qty = dict(cur[d]["slots"])
-            lines.append(f"{label(d)} 새로 열림: {', '.join(f'{t}({qty[t]})' for t in new) or '회차 정보 없음'}")
-            lines.append(f"  {EARLIEST_TIME}~{LATEST_TIME} {QUANTITY}장 이상 남은 회차: "
-                         f"{', '.join(f'{t}({qty[t]})' for t in cur_open[d][:6]) or '없음'}")
-            # PC 자동 진행 대상: 새로 열린 회차 중 가장 이른 것
-            if target is None and new:
-                target = (d, new[0])
-        lines.append("누르면 NOL 앱 상품 페이지가 열려요.")
-        pc_url = f"{PRODUCT_URL}#hwadam-auto={target[0]}_{target[1]}_{QUANTITY}" if target else None
-        if pc_url:
-            lines.append(f"맥이 켜져 있으면 {label(target[0])} {target[1]} 성인 {QUANTITY}장 주문서를 띄워요.")
-        notify(f"화담숲 {' · '.join(label(d) for d in opened)} 예약 가능!", "\n".join(lines), 5, pc_url=pc_url)
+    cur_open, alert = find_opened(dates, cur, prev, prev_open)
+    if alert:
+        title, message, pc_url = alert
+        notify(title, message, 5, pc_url=pc_url)
 
     save({"dates": {d: cur[d]["status"] for d in dates}, "open": cur_open})
 
