@@ -4,7 +4,7 @@
 크롬에 넣은 확장(desktop/extension)이 그 주소의 #hwadam-auto=날짜_시간_매수 를 읽어
 날짜·회차·성인·일반·매수를 고르고 '구매하기'까지 눌러 주문서를 띄운다. 결제는 사람이 한다.
 
-맥 조회를 켜 두면 GitHub 의 1분 조회 사이사이에 맥에서도 20초마다 직접 조회해 같은 식으로 알리고 띄운다.
+맥 조회를 켜 두면 GitHub 의 1분 조회 사이사이에 맥에서도 20초마다(.poll-every 로 이 맥만 바꿀 수 있음) 직접 조회해 같은 식으로 알리고 띄운다.
 켜고 끄기는 메뉴 막대 🍁(SwiftBar, desktop/swiftbar) 나 http://127.0.0.1:8789/poll/toggle.
 상태·로그는 http://127.0.0.1:8789/ 에서 본다. 노리는 날짜·회차·매수도 거기서 바꾼다 (GitHub 저장소 변수로 저장해
 GitHub 조회와 맥 조회가 같은 값을 쓴다. GitHub 에서 직접 고친 값도 몇 분 안에 따라감).
@@ -32,7 +32,12 @@ TOPIC_FILE = os.path.join(ROOT, ".ntfy-topic")
 AUTO_MARK = "#hwadam-auto="
 LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오고, 메뉴 막대·단축어가 맥 조회를 켜고 끄는 로컬 포트
 POLL_FLAG = os.path.join(ROOT, ".local-poll")  # 이 파일이 있으면 맥 조회가 켜진 것 (껐다 켜도 유지)
-POLL_EVERY = 20  # 초
+POLL_EVERY_FILE = os.path.join(ROOT, ".poll-every")  # 이 맥에서만 간격을 바꾸려면 초를 한 줄로 (git 에 안 올림)
+try:
+    with open(POLL_EVERY_FILE) as f:
+        POLL_EVERY = max(1, int(f.read().strip()))  # 초
+except (OSError, ValueError):
+    POLL_EVERY = 20  # 초
 REOPEN_AFTER = 10 * 60  # 같은 회차는 이 시간(초) 안에 다시 알려도 크롬을 또 열지 않는다
 LOG_FILE = os.path.expanduser("~/Library/Logs/hwadam-listener.log")  # install.sh 가 launchd 출력을 여기로 보낸다
 DASHBOARD = os.path.join(HERE, "dashboard.html")  # http://127.0.0.1:8789/ 상태·로그 화면
@@ -218,7 +223,7 @@ def swiftbar_menu():
         title = "🍁 쉼 | color=#d97706"
     else:
         title = "🍁 켜짐" if on else "🍁 꺼짐"
-    menu = [title, "---", f"맥 20초 조회 {poll_text()}"]
+    menu = [title, "---", f"맥 조회 {poll_text()}"]
     if on:
         if now < paused_until:
             menu.append(f"조회가 막혀서 {datetime.fromtimestamp(paused_until):%H:%M} 까지 쉼")
@@ -386,7 +391,7 @@ def poll_loop(topic):
                     else:
                         log(f"맥 조회: {title}")
                         try:
-                            watch.notify(title, message + "\n(맥 20초 조회에서 찾음)", 5, pc_url=url)
+                            watch.notify(title, message + f"\n(맥 {POLL_EVERY}초 조회에서 찾음)", 5, pc_url=url)
                         except Exception as e:  # 폰 알림이 실패해도 크롬은 띄운다
                             log(f"맥 조회: 폰 알림 실패 {watch.describe(e)}")
                         if url:
