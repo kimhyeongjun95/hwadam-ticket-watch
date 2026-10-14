@@ -145,7 +145,21 @@
       return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${input.value}장`, "#b45309");
     }
     say("구매하기 누름 — 주문서가 뜨면 결제만 하세요.", "#047857");
+    // 주문서로 넘어가면 이 페이지가 사라진다. 그대로 남아 창이 뜨면 ('선택한 상품이 매진되었어요' 등) 무엇인지 남긴다
+    const notices = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((e) => visible(e) && text(e))
+      .concat([...document.querySelectorAll("body *")].filter((e) => !e.children.length && /매진|품절|초기화|다시 선택/.test(e.textContent) && visible(e)));
+    let shown = new Set();
+    try { shown = new Set(notices()); } catch (_) {} // 무슨 일이 있어도 구매하기는 누른다
+    const here = location.href; // 같은 페이지 안에서 주문서 주소로 바뀌어도 넘어간 것
     buy.click();
+    for (const end = Date.now() + 15000; Date.now() < end; ) {
+      await sleep(300);
+      if (location.href !== here) return;
+      let notice = null;
+      try { notice = notices().find((e) => !shown.has(e)); } catch (_) {}
+      if (notice) stop(`구매하기 뒤 주문서 대신 '${(notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60)}' 창이 떴어요.`);
+    }
+    say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c");
   }
 
   run().catch((e) => console.warn("[hwadam-auto]", e));
