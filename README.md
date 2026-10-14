@@ -29,7 +29,7 @@
 
 - 테스트 알림: Actions → watch → Run workflow → "테스트 알림만 보내기" 체크
 - 날짜 변경: `watch.py` 의 `TARGET_DATES` 기본값 수정
-- 노리는 회차: `watch.py` 의 `EARLIEST_TIME`(기본 11:00) 이상 `LATEST_TIME`(기본 15:00) 전, `QUANTITY`(기본 2)장 이상 남은 회차만 알림·자동 진행 대상. 그 밖은 기록에만 남음
+- 노리는 회차: `watch.py` 의 `EARLIEST_TIME`(기본 09:00) 이상 `LATEST_TIME`(기본 15:00) 전, `QUANTITY`(기본 2)장 이상 남은 회차만 알림·자동 진행 대상. 그 밖은 기록에만 남음
 - 끝나면: Actions → watch → ⋯ → Disable workflow
 
 ## 맥에서 주문서까지 자동으로 띄우기 (선택)

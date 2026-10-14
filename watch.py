@@ -20,7 +20,7 @@ APP_PRODUCT_URL = f"nol-app://wv?url={PRODUCT_URL}"
 # EARLIEST_TIME 이상 LATEST_TIME 전에 입장하고 QUANTITY 장 이상 남은 회차만 노린다.
 # 그 밖의 회차는 재고가 생겨도 알리지 않는다 (기록에는 남김)
 QUANTITY = int(os.environ.get("QUANTITY", "2"))
-EARLIEST_TIME = os.environ.get("EARLIEST_TIME", "11:00")
+EARLIEST_TIME = os.environ.get("EARLIEST_TIME", "09:00")
 LATEST_TIME = os.environ.get("LATEST_TIME", "15:00")
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
