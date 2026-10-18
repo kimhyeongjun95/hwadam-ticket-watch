@@ -141,17 +141,24 @@
 
     // 6. 매수
     const input = await waitFor(() => buttons('input[aria-label="숫자 입력"]')[0], "매수 입력칸");
+    // 회차를 고른 직후엔 플러스 버튼이 잠깐 비활성이라, 눌릴 수 있게 될 때까지 기다렸다가 누른다
+    // (예전엔 비활성을 보자마자 포기해서 2장 알림에도 1장으로 넘어갔다 — 10/17·10/18 세 번)
+    const plusReady = () => {
+      const p = document.querySelector('button[aria-label="플러스 버튼"]');
+      return p && !p.disabled && p.getAttribute("aria-disabled") !== "true" ? p : null;
+    };
     for (let i = 0; i < 10 && Number(input.value) < qty; i++) {
-      const plus = document.querySelector('button[aria-label="플러스 버튼"]');
-      if (!plus || plus.disabled) break;
+      const plus = await until(plusReady, 2000);
+      if (!plus) break;
       const before = Number(input.value);
       plus.click();
       await until(() => Number(input.value) !== before || null, 1000);
     }
     lap("매수");
-    // 알림 뒤 그새 표가 줄었으면 남은 만큼(1장이라도) 산다
-    if (Number(input.value) < 1) stop(`매수를 1장으로도 못 맞췄어요 (지금 ${input.value}장).`);
-    if (Number(input.value) < qty) say(`${qty}장까지는 안 남아서 ${input.value}장으로 진행해요.`);
+    // 목표 매수를 못 채우면 구매하기를 누르지 않는다 (남은 표가 정말 모자라거나 버튼이 안 눌린 경우)
+    if (Number(input.value) !== qty) {
+      stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${input.value}장). 남은 표가 모자랄 수 있어요.`);
+    }
 
     // 7. 구매하기 — 매수 입력칸과 같은 창 안의 버튼
     let box = input.parentElement, buy = null;
