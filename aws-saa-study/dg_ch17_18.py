@@ -205,3 +205,117 @@ def _():
     D.edge('b1', 'efs', both=True, sa='r', sb=('l', 0.3), via=[(438, 68), (438, 115.2)])
     D.edge('b2', 'efs', both=True, dash=True, sa='r', sb=('l', 0.7), via=[(450, 190), (450, 140.8)])
     return D
+
+
+@reg('c18-docker-ecr')
+def _():
+    D = Diagram('c18-docker-ecr', w=600, at='Amazon ECR(Elastic Container Registry)',
+                cap='Dockerfile로 이미지를 만들어 ECR에 올리면 ECS, EKS, Lambda가 내려받아 실행합니다. 아래는 가상 머신과 컨테이너의 차이로, 컨테이너는 호스트 OS 커널을 함께 써서 가볍습니다.')
+    D.node('df', 8, 24, 110, 72, 'Dockerfile', None, 'file')
+    D.node('img', 160, 24, 110, 72, '이미지', 'docker build', 'box')
+    D.node('ecr', 320, 16, 150, 88, 'Amazon ECR', '비공개 저장소 · 스캔', 'box', t='hl')
+    D.node('ecs', 500, 8, 92, 36, 'ECS')
+    D.node('eks', 500, 52, 92, 36, 'EKS')
+    D.node('lam', 500, 96, 92, 36, 'Lambda')
+    D.edge('df', 'img', 'build', t='acc')
+    D.edge('img', 'ecr', 'push', t='acc')
+    D.edge('ecr', 'ecs', t='acc')
+    D.edge('ecr', 'eks', t='acc')
+    D.edge('ecr', 'lam', t='acc', sa=('r', 0.85), sb='l')
+    D.group(8, 166, 284, 158, '가상 머신: OS를 각자', solid=True)
+    D.bar(20, 196, 128, 28, '앱 A', t='soft')
+    D.bar(152, 196, 128, 28, '앱 B', t='soft')
+    D.bar(20, 226, 128, 28, '게스트 OS', t='muted')
+    D.bar(152, 226, 128, 28, '게스트 OS', t='muted')
+    D.bar(20, 256, 260, 28, '하이퍼바이저', t='store')
+    D.bar(20, 286, 260, 28, '하드웨어', t='muted')
+    D.group(300, 166, 292, 158, '컨테이너: OS 커널을 함께', solid=True)
+    for j, a in enumerate(['앱 A', '앱 B', '앱 C']):
+        D.bar(312 + j * 90, 196, 86, 28, a, t='soft')
+    D.bar(312, 226, 266, 28, 'Docker 엔진', t='acc')
+    D.bar(312, 256, 266, 28, '호스트 OS', t='muted')
+    D.bar(312, 286, 266, 28, '하드웨어', t='muted')
+    return D
+
+
+@reg('c18-ecs')
+def _():
+    D = Diagram('c18-ecs', w=600, at='데이터 볼륨',
+                cap='ALB가 여러 AZ의 작업으로 요청을 나눕니다. 작업 안의 앱은 작업 역할로 DynamoDB 같은 AWS 서비스에 접근하고, 이미지 받기와 로그 전송은 작업 실행 역할이 맡습니다. EFS는 여러 작업이 함께 쓰는 영구 저장소입니다.')
+    D.node('alb', 8, 100, 104, 64, 'ALB', '동적 포트', 'lb', t='hl', lay='side')
+    D.group(150, 8, 250, 240, 'ECS 서비스 · 원하는 작업 3', solid=True)
+    D.node('t1', 162, 40, 226, 52, '작업 1', 'AZ a · Fargate', 'box')
+    D.node('t2', 162, 112, 226, 52, '작업 2', 'AZ b · Fargate', 'box')
+    D.node('t3', 162, 184, 226, 52, '작업 3', 'AZ c · EC2 시작 유형', 'box')
+    D.node('ddb', 440, 8, 152, 56, 'DynamoDB', '작업 역할로 접근', 'db', t='store', lay='side')
+    D.node('efs', 440, 100, 152, 64, 'EFS', '작업들이 공유', 'folder', t='store', lay='side')
+    D.node('ecr', 440, 196, 152, 56, 'ECR · 로그', '작업 실행 역할', 'box', lay='side')
+    D.edge('alb', 't1', t='acc', sa=('r', 0.2), sb='l')
+    D.edge('alb', 't2', t='acc')
+    D.edge('alb', 't3', t='acc', sa=('r', 0.8), sb='l')
+    D.edge('t1', 'ddb', both=True)
+    D.edge('t2', 'efs', both=True, dash=True)
+    D.edge('t3', 'ecr', both=True, dash=True)
+    return D
+
+
+@reg('c18-ecs-scaling')
+def _():
+    D = Diagram('c18-ecs-scaling', w=600, at='작업 수와 서버 수는 따로 늘어난다',
+                cap='CloudWatch 지표가 목표를 넘으면 Application Auto Scaling이 서비스의 원하는 작업 수를 늘립니다. EC2 시작 유형이면 용량 공급자가 그 작업을 올릴 EC2를 ASG로 함께 늘리고, Fargate는 작업만 늘리면 됩니다.')
+    D.node('cw', 8, 30, 150, 64, 'CloudWatch 지표', 'CPU · 요청 수')
+    D.node('aas', 220, 30, 160, 64, 'Auto Scaling', '원하는 작업 수 ↑', 'scale', lay='side')
+    D.node('svc', 410, 16, 182, 92, 'ECS 서비스', '작업 4 → 8', 'box', t='hl')
+    D.node('cp', 410, 150, 182, 64, '용량 공급자', 'ASG 인스턴스 ↑', 'server', lay='side')
+    D.node('fg', 220, 150, 160, 64, 'Fargate', '작업만 늘리면 끝', 'cloud', t='ok', lay='side')
+    D.edge('cw', 'aas', '목표 초과', t='acc')
+    D.edge('aas', 'svc', t='acc')
+    D.edge('svc', 'cp', 'EC2라면', t='acc')
+    D.edge('svc', 'fg', 'Fargate라면', t='ok', sa=('b', 0.15), sb='t')
+    return D
+
+
+@reg('c18-ecs-scaling:patterns')
+def _():
+    D = Diagram('c18-ecs-scaling:patterns', w=600, at='end:자주 나오는 아키텍처 네 가지',
+                cap='① 파일 업로드 처리, ② 일정 배치, ③ 대기열 소비, ④ 작업 장애 알림. 모두 서버 관리 없이 Fargate 작업으로 만들 수 있습니다.')
+    rows = [
+        [('① S3 업로드', None), ('EventBridge', '규칙'), ('ECS 작업', 'Fargate'), ('DynamoDB', '결과 저장')],
+        [('② EventBridge', '매시간 일정'), ('ECS 작업', 'Fargate'), ('S3', '배치 처리'), None],
+        [('③ SQS', '대기열'), ('ECS 서비스', '폴링 · 자동 확장'), None, None],
+        [('④ ECS 작업', 'STOPPED 이벤트'), ('EventBridge', '규칙'), ('SNS', '주제'), ('관리자', '이메일')],
+    ]
+    for i, row in enumerate(rows):
+        y = 16 + i * 64
+        prev = None
+        for j, cell in enumerate(row):
+            if not cell:
+                continue
+            key = f'n{i}{j}'
+            D.node(key, 8 + j * 148, y, 128, 48, cell[0], cell[1], t='hl' if 'ECS' in cell[0] else 'plain')
+            if prev:
+                D.edge(prev, key, t='acc')
+            prev = key
+    return D
+
+
+@reg('c18-eks')
+def _():
+    D = Diagram('c18-eks', w=600, at='데이터 볼륨',
+                cap='AWS가 쿠버네티스 컨트롤 플레인을 여러 AZ에서 운영하고, 워커 노드는 관리형 노드 그룹, 자체 관리형 노드, Fargate, EKS Auto Mode 중에서 고릅니다. 저장소는 CSI 드라이버로 EBS, EFS, FSx를 붙입니다.')
+    D.node('cli', 8, 8, 150, 44, 'kubectl · Helm')
+    D.node('cp', 8, 92, 150, 100, 'EKS 컨트롤 플레인', 'AWS가 운영 · 다중 AZ', t='hl')
+    D.edge('cli', 'cp', 'API', t='acc')
+    D.arrow((158, 142), (198, 142), t='acc')
+    D.group(200, 8, 240, 240, '데이터 플레인 (노드)', solid=True)
+    D.node('mng', 212, 40, 216, 44, '관리형 노드 그룹', 'EC2 · 온디맨드·스팟')
+    D.node('self', 212, 92, 216, 44, '자체 관리형 노드', '사용자 지정 AMI')
+    D.node('fg', 212, 144, 216, 44, 'Fargate', '노드 없이 파드 실행', t='ok')
+    D.node('auto', 212, 196, 216, 44, 'EKS Auto Mode', '노드 관리까지 위임', t='ok')
+    D.node('ebs', 480, 40, 112, 56, 'EBS', 'CSI 드라이버', t='store')
+    D.node('efs', 480, 124, 112, 56, 'EFS', 'Fargate도 가능', t='store')
+    D.node('fsx', 480, 200, 112, 48, 'FSx', 'Lustre · ONTAP', t='store')
+    D.edge('mng', 'ebs', dash=True)
+    D.edge('fg', 'efs', dash=True)
+    D.edge('auto', 'fsx', dash=True)
+    return D
