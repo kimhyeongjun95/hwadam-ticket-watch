@@ -1,6 +1,6 @@
 /* Layout: sticky study bar; left rail = the exam blueprint (domains, weights, progress);
    right = a manual-style reading column. Slate "console" neutrals with one burnt-orange accent;
-   formal text reads like a spec sheet, the kid analogies open like lined notebook pages. */
+   formal text reads like a spec sheet; field cases sit in a green-ruled box, plain re-explanations fold open below. */
 :root {
   --paper: #F3F5F7; --surface: #FFFFFF; --surface-2: #E9EDF1;
   --ink: #16191F; --ink-2: #47505D; --ink-3: #555F6D; --line: #D5DBE2; --dg-stroke: #A8B2BF;
@@ -13,7 +13,6 @@
   --inline-code-bg: #E4E8ED;
   --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-  --font-kid: "Gowun Dodum", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --bar-h: 60px;
 }
 @media (prefers-color-scheme: dark) {
@@ -193,7 +192,6 @@ button { font: inherit; color: inherit; }
 .table-wrap.stack table, .table-wrap.stack tbody, .table-wrap.stack tr, .table-wrap.stack td { display: block; width: auto; }
 .table-wrap.stack thead { display: none; }
 .table-wrap.stack tr { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 8px; background: var(--surface); }
-.analogy-body .table-wrap.stack tr { border-color: var(--diary-edge); background: var(--diary-bg); }
 .table-wrap.stack td { border: 0; padding: 0; min-width: 0; }
 .table-wrap.stack td:first-child { font-weight: 600; }
 .table-wrap.stack td + td { margin-top: 6px; }
@@ -230,29 +228,41 @@ figure.code pre code { font: inherit; color: inherit; background: none; padding:
 .code .nv, .code .vg, .code .si, .code .se { color: var(--tok-var); }
 .code .p-Indicator, .code .l-Scalar-Plain { color: var(--code-fg); }
 
-/* ---------- analogy notebook ---------- */
-details.analogy { margin: 26px 0 8px; border: 1px dashed var(--diary-edge); border-radius: 6px; background: var(--diary-bg); max-width: 70ch; }
-details.analogy summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 12px 16px; font: 17px/1.4 var(--font-kid); color: var(--diary-ink); }
+/* ---------- field cases ---------- */
+aside.practice { margin: 24px 0 8px; max-width: 70ch; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--tip-ink); border-radius: 6px; padding: 12px 16px 14px; }
+.practice-h { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 15px; font-weight: 700; color: var(--tip-ink); }
+.brief { width: 18px; height: 18px; fill: none; stroke: var(--tip-ink); stroke-width: 1.8; stroke-linejoin: round; flex: none; }
+.practice-body { font-size: 15.5px; line-height: 1.75; }
+.practice-body p { margin: 8px 0; }
+.practice-body ul, .practice-body ol { padding-left: 1.3em; margin: 6px 0; }
+.practice-body li { margin: 6px 0; }
+.practice-body li::marker { color: var(--ink-3); }
+.practice-body strong { font-weight: 600; }
+.practice-body code { font: 0.88em var(--font-mono); background: var(--inline-code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.practice-body .table-wrap { margin: 10px 0; }
+.practice-body table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.6; }
+.practice-body th, .practice-body td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.practice-body th { background: var(--surface-2); font-weight: 600; font-size: 13.5px; }
+
+/* ---------- plain re-explanation ---------- */
+details.analogy { margin: 12px 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); max-width: 70ch; }
+details.analogy summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 11px 16px; font-size: 15px; font-weight: 600; color: var(--ink-2); }
 details.analogy summary::-webkit-details-marker { display: none; }
-.pencil { width: 18px; height: 18px; fill: none; stroke: var(--diary-ink); stroke-width: 1.8; stroke-linejoin: round; flex: none; }
+.pencil { width: 18px; height: 18px; fill: none; stroke: var(--ink-2); stroke-width: 1.8; stroke-linejoin: round; flex: none; }
 .analogy-label { flex: 1; }
-.analogy-hint { font: 12px var(--font-body); color: var(--diary-ink); opacity: .75; }
+.analogy-hint { font-size: 12px; font-weight: 400; color: var(--ink-3); }
 .analogy-hint::after { content: "펼치기"; }
 details.analogy[open] .analogy-hint::after { content: "접기"; }
-.analogy-body {
-  padding: 2px 20px 18px; font: 17px/2 var(--font-kid); color: var(--ink);
-  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(2em - 1px), var(--diary-rule) calc(2em - 1px), var(--diary-rule) 2em);
-  background-position: 0 0.35em;
-}
-.analogy-body p { margin: 0 0 2em; }
-.analogy-body p:last-child { margin-bottom: 0; }
-.analogy-body ul, .analogy-body ol { margin: 0 0 2em; padding-left: 1.3em; }
-.analogy-body strong { color: var(--diary-ink); }
-.analogy-body code { font: 0.85em var(--font-mono); background: transparent; border-bottom: 1px dotted var(--diary-edge); }
-.analogy-body .table-wrap { border-color: var(--diary-edge); background: var(--diary-bg); margin: 0 0 1em; }
-.analogy-body table { border-collapse: collapse; width: 100%; font: 15px/1.6 var(--font-body); }
-.analogy-body th, .analogy-body td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--diary-rule); }
-.analogy-body th { font-weight: 600; color: var(--diary-ink); }
+.analogy-body { padding: 0 18px 14px; font-size: 15.5px; line-height: 1.8; color: var(--ink); }
+.analogy-body p { margin: 8px 0; }
+.analogy-body ul, .analogy-body ol { margin: 8px 0; padding-left: 1.3em; }
+.analogy-body li { margin: 4px 0; }
+.analogy-body strong { font-weight: 600; }
+.analogy-body code { font: 0.88em var(--font-mono); background: var(--inline-code-bg); padding: 1px 5px; border-radius: 4px; }
+.analogy-body .table-wrap { background: var(--surface); margin: 10px 0; }
+.analogy-body table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.6; }
+.analogy-body th, .analogy-body td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.analogy-body th { font-weight: 600; background: var(--surface-2); }
 
 /* ---------- quiz ---------- */
 .quiz-block { margin-top: 48px; padding: 20px 20px 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
@@ -327,12 +337,6 @@ figure.dg figcaption { font-size: 13.5px; line-height: 1.6; color: var(--ink-3);
 .dg .tx-acc { fill: var(--accent-ink); }
 .dg .tx-bad { fill: var(--warn-ink); }
 .dg .tx-ok { fill: var(--tip-ink); }
-.analogy-body figure.dg { margin: 0 0 2em; }
-.analogy-body figure.dg .dg-scroll { background: var(--diary-bg); border-radius: 6px; padding: 4px 0; }
-.analogy-body .dg text { font-family: var(--font-kid); }
-.analogy-body .dg .lbl { font-weight: 400; }
-.analogy-body .dg .elbg { fill: var(--diary-bg); }
-.analogy-body figure.dg figcaption { font: 14px/1.7 var(--font-kid); color: var(--diary-ink); margin-top: 6px; }
 .dg-hint { display: none; }
 @media (max-width: 560px) { .dg-hint { display: inline; } }
 
@@ -399,6 +403,5 @@ footer.page-foot { border-top: 1px solid var(--line); margin-top: 72px; padding-
   .t-long { display: none; }
   .t-short { display: inline; }
   .topic-head h3 { font-size: 21px; }
-  .analogy-body, details.analogy summary { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .rail, .meter span { transition: none; } }

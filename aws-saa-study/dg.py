@@ -9,6 +9,7 @@ import html
 from icons import ICONS
 
 REG = {}          # diagram id -> builder function
+KID = False       # analogy-label versions are no longer rendered or checked
 
 
 def reg(did):
@@ -369,7 +370,7 @@ class Diagram:
     # ---------- checks ----------
     def check(self):
         warns = []
-        for kid in (False, True):
+        for kid in ((False, True) if KID else (False,)):
             tag = self.did + (' [비유]' if kid else '')
             W, H = self.W, self.height()
             boxes = {k: n.rect() for k, n in self.nodes.items()}

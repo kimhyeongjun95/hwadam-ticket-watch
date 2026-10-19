@@ -6,8 +6,10 @@ content/*.md format
   @topic id | 제목 | dom=1,2 | prio=3 | rev=1 | les=Lecture A; Lecture B
   markdown body ([4.1](#topic-id) links get the current number)
   @fig diagram-id                            (extra diagram at this spot; the main one is automatic)
-  @analogy
-  markdown for the kid note
+  @practice
+  markdown: what each resource does at work, with real-world cases (shown open)
+  @easy
+  markdown: plain re-explanation, an analogy only where it fits (collapsible)
   @quiz                                      (belongs to the part; Q:/A: pairs)
 Diagrams live in dg_*.py (registered by topic id; extras as "topic:name").
 """
@@ -55,12 +57,17 @@ def parse():
                 for fl in fields[2:]:
                     k, _, v = fl.partition('=')
                     meta[k.strip()] = v.strip()
-                cur_topic = dict(id=fields[0], title=fields[1], body=[], analogy=[], meta=meta, part=cur_part['id'])
+                cur_topic = dict(id=fields[0], title=fields[1], body=[], easy=[], practice=[], legacy=False, meta=meta, part=cur_part['id'])
                 cur_part['topics'].append(cur_topic)
                 mode = 'body'
                 continue
-            if line.strip() == '@analogy':
-                mode = 'analogy'
+            if line.strip() in ('@easy', '@analogy'):
+                mode = 'easy'
+                if line.strip() == '@analogy':
+                    cur_topic['legacy'] = True
+                continue
+            if line.strip() == '@practice':
+                mode = 'practice'
                 continue
             if line.strip() == '@quiz':
                 mode = 'quiz'
@@ -69,8 +76,10 @@ def parse():
                 cur_part['intro'].append(line)
             elif mode == 'body':
                 cur_topic['body'].append(line)
-            elif mode == 'analogy':
-                cur_topic['analogy'].append(line)
+            elif mode == 'easy':
+                cur_topic['easy'].append(line)
+            elif mode == 'practice':
+                cur_topic['practice'].append(line)
             elif mode == 'quiz':
                 cur_part['quiz'].append(line)
     return parts
@@ -234,6 +243,7 @@ def done_btn(tid):
             f'<span class="done-text">이해했어요</span></button>')
 
 
+BRIEF = '<svg class="brief" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/></svg>'
 PENCIL = '<svg class="pencil" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1-5L15.5 4.5a2.1 2.1 0 0 1 3 3L8 18z"/><path d="M13.5 6.5l3 3"/></svg>'
 
 
@@ -339,9 +349,7 @@ def main():
                 for w in D.check():
                     warns.append('diagram ' + w)
                 body = insert_figure(body, D.figure(), D.at)
-                kidfig = D.figure(kid=True)
             else:
-                kidfig = ''
                 if tid not in GL.NO_FIG and not tid.startswith(('x-', 'ap-')):
                     warns.append(f'{tid}: concept topic without diagram')
             for extra in [k for k in dg.REG if k.startswith(tid + ':')]:
@@ -371,20 +379,30 @@ def main():
                 if les:
                     lab_html += '<span class="labs-label">강의</span>' + ''.join(f'<span class="lab">{esc(x)}</span>' for x in les)
                 lab_html += '</div>'
+            concept = tid not in GL.NO_FIG and not tid.startswith(('x-', 'ap-', 'start-'))
+            prac = ''
+            if t['practice'] and ''.join(t['practice']).strip():
+                prac_body = fix_links(md('\n'.join(t['practice']).strip()))
+                prac = (f'<aside class="practice"><p class="practice-h">{BRIEF}실무에서는</p>'
+                        f'<div class="practice-body">{prac_body}</div></aside>')
+            elif concept:
+                warns.append(f'{tid}: no practice cases')
             ana = ''
-            if t['analogy'] and ''.join(t['analogy']).strip():
-                ana_body = md('\n'.join(t['analogy']).strip())
-                ana = (f'<details class="analogy"><summary>{PENCIL}<span class="analogy-label">초등학생도 이해하는 비유</span>'
-                       f'<span class="analogy-hint"></span></summary><div class="analogy-body">{kidfig}{ana_body}</div></details>')
-            elif tid not in GL.NO_FIG and not tid.startswith(('x-', 'ap-')):
-                warns.append(f'{tid}: no analogy note')
+            if t['easy'] and ''.join(t['easy']).strip():
+                ana_body = fix_links(md('\n'.join(t['easy']).strip()))
+                ana = (f'<details class="analogy"><summary>{PENCIL}<span class="analogy-label">쉽게 풀어 보기</span>'
+                       f'<span class="analogy-hint"></span></summary><div class="analogy-body">{ana_body}</div></details>')
+            elif concept:
+                warns.append(f'{tid}: no plain explanation')
+            if t['legacy']:
+                warns.append(f'{tid}: old kid analogy not rewritten yet')
             no = f'<span class="topic-no">{t["no"]}</span>' if t['no'] else ''
             art = (f'<article class="topic" id="{tid}" data-part="{p["id"]}"><header class="topic-head"><h3>{no}{esc(t["title"])}</h3>{done_btn(tid)}</header>'
-                   f'{lab_html}<div class="prose">{body}</div>{ana}'
+                   f'{lab_html}<div class="prose">{body}</div>{prac}{ana}'
                    f'<footer class="topic-foot"><span class="topic-foot-hint">다 읽었으면 표시해 두세요</span>{done_btn(tid)}</footer></article>')
             sec.append(art)
             index.append({'id': tid, 'part': p['id'], 't': (t['no'] + ' ' + t['title']).lower(),
-                          'x': plain(body + ana).lower()})
+                          'x': plain(body + prac + ana).lower()})
             toc_items.append(f'<li><a href="#{tid}" data-id="{tid}"><span class="dot" aria-hidden="true"></span>'
                              f'<span class="nav-no">{t["no"]}</span><span class="nav-title">{esc(t["title"])}</span></a></li>')
         quiz = parse_quiz(p['quiz'])
@@ -441,7 +459,7 @@ def main():
     extra_css = open(os.path.join(ROOT, 'tpl', 'extra.css'), encoding='utf-8').read()
     app = open(os.path.join(ROOT, 'tpl', 'app.js'), encoding='utf-8').read()
     cfg = {"key": "aws-saa-study:done:v1", "doneOn": "이해 완료", "doneOff": "이해했어요", "toggleSel": "details.analogy",
-           "longOpen": "비유 모두 펼치기", "longClose": "비유 모두 접기", "shortOpen": "비유 펼치기", "shortClose": "비유 접기"}
+           "longOpen": "풀이 모두 펼치기", "longClose": "풀이 모두 접기", "shortOpen": "풀이 펼치기", "shortClose": "풀이 접기"}
     app = (app.replace('__INDEX__', json.dumps(index, ensure_ascii=False))
               .replace('__CFG__', json.dumps(cfg, ensure_ascii=False))
               .replace('__TOTAL__', str(total))
@@ -452,7 +470,7 @@ def main():
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
 <style>
 {tpl_css}
 {extra_css}
@@ -469,7 +487,7 @@ def main():
     <div class="progress" title="이해했어요로 표시한 주제 수">
       <span id="prog-text">0 / {total}</span><span class="meter" aria-hidden="true"><span id="prog-bar"></span></span>
     </div>
-    <button class="ghost-btn" type="button" id="toggle-analogies" aria-pressed="false"><span class="t-long">비유 모두 펼치기</span><span class="t-short">비유 펼치기</span></button>
+    <button class="ghost-btn" type="button" id="toggle-analogies" aria-pressed="false"><span class="t-long">풀이 모두 펼치기</span><span class="t-short">풀이 펼치기</span></button>
   </div>
 </header>
 <div class="scrim" id="scrim"></div>
@@ -501,7 +519,7 @@ def main():
     gal = ['<title>그림 갤러리</title><style>' + tpl_css + extra_css + '</style><main class="main" style="max-width:none">']
     for k in sorted(dg.REG):
         D = dg.REG[k]()
-        gal.append(f'<section><h3>{esc(k)}</h3>{D.figure()}<div class="analogy-body">{D.figure(kid=True)}</div></section>')
+        gal.append(f'<section><h3>{esc(k)}</h3>{D.figure()}</section>')
     gal.append('</main>')
     open(os.path.join(DIST, 'gallery.html'), 'w', encoding='utf-8').write(''.join(gal))
 
