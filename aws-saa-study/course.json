@@ -1,0 +1,600 @@
+{
+ "course": "Ultimate AWS Certified Solutions Architect Associate 2026 (Stephane Maarek, Udemy course 2196488)",
+ "fetched": "2026-10-19",
+ "sections": [
+  {
+   "no": 1,
+   "title": "Introduction - AWS Certified Solutions Architect Associate",
+   "lectures": [
+    "Course Introduction - AWS Certified Solutions Architect Associate",
+    "PLEASE READ: Lectures you can skip if you took a course from me before",
+    "Creating an AWS Account",
+    "AWS Account Activation Troubleshooting",
+    "Important Message",
+    "About your instructor"
+   ]
+  },
+  {
+   "no": 2,
+   "title": "Code & Slides Download",
+   "lectures": [
+    "Slides and Code Download"
+   ]
+  },
+  {
+   "no": 3,
+   "title": "Getting started with AWS",
+   "lectures": [
+    "AWS Cloud Overview - Regions & AZ",
+    "[Important] AWS Console UI Update",
+    "Tour of the AWS Console & Services in AWS"
+   ]
+  },
+  {
+   "no": 4,
+   "title": "IAM & AWS CLI",
+   "lectures": [
+    "IAM Introduction: Users, Groups, Policies",
+    "IAM Users & Groups Hands On",
+    "AWS Console Simultaneous Sign-in",
+    "IAM Policies",
+    "IAM Policies Hands On",
+    "IAM MFA Overview",
+    "IAM MFA Hands On",
+    "AWS Access Keys, CLI and SDK",
+    "AWS CLI Setup on Windows",
+    "AWS CLI Setup on Mac OS X",
+    "AWS CLI Setup on Linux",
+    "AWS CLI Hands On",
+    "AWS CloudShell: Region Availability",
+    "AWS CloudShell",
+    "IAM Roles for AWS Services",
+    "IAM Roles Hands On",
+    "IAM Security Tools",
+    "IAM Security Tools Hands On",
+    "IAM Best Practices",
+    "IAM Summary"
+   ]
+  },
+  {
+   "no": 5,
+   "title": "EC2 Fundamentals",
+   "lectures": [
+    "AWS Budget Setup",
+    "EC2 Basics",
+    "Create an EC2 Instance with EC2 User Data to have a Website Hands On",
+    "EC2 Instance Types Basics",
+    "Security Groups & Classic Ports Overview",
+    "Security Groups Hands On",
+    "SSH Overview",
+    "How to SSH using Linux or Mac",
+    "How to SSH using Windows",
+    "How to SSH using Windows 10",
+    "SSH Troubleshooting",
+    "EC2 Instance Connect",
+    "EC2 Instance Roles Demo",
+    "EC2 Instance Purchasing Options",
+    "Spot Instances & Spot Fleet",
+    "EC2 Instances Launch Types Hands On"
+   ]
+  },
+  {
+   "no": 6,
+   "title": "EC2 - Solutions Architect Associate Level",
+   "lectures": [
+    "Private vs Public vs Elastic IP",
+    "Private vs Public vs Elastic IP Hands On",
+    "EC2 Placement Groups",
+    "EC2 Placement Groups - Hands On",
+    "Elastic Network Interfaces (ENI) - Overview",
+    "Elastic Network Interfaces (ENI) - Hands On",
+    "ENI - Extra Reading",
+    "EC2 Hibernate",
+    "EC2 Hibernate - Hands On"
+   ]
+  },
+  {
+   "no": 7,
+   "title": "EC2 Instance Storage",
+   "lectures": [
+    "EBS Overview",
+    "EBS Hands On",
+    "EBS Snapshots",
+    "EBS Snapshots - Hands On",
+    "AMI Overview",
+    "AMI Hands On",
+    "EC2 Instance Store",
+    "EBS Volume Types",
+    "EBS Multi-Attach",
+    "EBS Encryption",
+    "Amazon EFS",
+    "Amazon EFS - Hands On",
+    "EFS vs EBS",
+    "EBS & EFS - Section Cleanup"
+   ]
+  },
+  {
+   "no": 8,
+   "title": "High Availability and Scalability: ELB & ASG",
+   "lectures": [
+    "High Availability and Scalability",
+    "Elastic Load Balancing (ELB) Overview",
+    "Application Load Balancer (ALB)",
+    "Application Load Balancer (ALB) - Hands On - Part 1",
+    "Application Load Balancer (ALB) - Hands On - Part 2",
+    "Network Load Balancer (NLB)",
+    "Network Load Balancer (NLB) - Hands On",
+    "Gateway Load Balancer (GWLB)",
+    "Elastic Load Balancer - Sticky Sessions",
+    "Elastic Load Balancer - Cross Zone Load Balancing",
+    "Elastic Load Balancer - SSL Certificates",
+    "Elastic Load Balancer - SSL Certificates - Hands On",
+    "Elastic Load Balancer - Connection Draining",
+    "Auto Scaling Groups (ASG) Overview",
+    "Auto Scaling Groups Hands On",
+    "Auto Scaling Groups - Scaling Policies",
+    "Auto Scaling Groups - Scaling Policies Hands On"
+   ]
+  },
+  {
+   "no": 9,
+   "title": "AWS Fundamentals: RDS + Aurora + ElastiCache",
+   "lectures": [
+    "Amazon RDS Overview",
+    "RDS Read Replicas vs Multi AZ",
+    "Amazon RDS Hands On",
+    "RDS Custom for Oracle and Microsoft SQL Server",
+    "Amazon Aurora",
+    "Amazon Aurora - Hands On",
+    "Amazon Aurora - Advanced Concepts",
+    "RDS & Aurora - Backup and Monitoring",
+    "RDS  Security",
+    "RDS Proxy",
+    "ElastiCache Overview",
+    "ElastiCache Hands On",
+    "ElastiCache for Solution Architects",
+    "List of Ports to be familiar with"
+   ]
+  },
+  {
+   "no": 10,
+   "title": "Route 53",
+   "lectures": [
+    "What is a DNS ?",
+    "Route 53 Overview",
+    "Route 53 - Registering a domain",
+    "Route 53 - Creating our first records",
+    "Route 53 - EC2 Setup",
+    "Route 53 - TTL",
+    "Route 53 CNAME vs Alias",
+    "Routing Policy - Simple",
+    "Routing Policy - Weighted",
+    "Routing Policy - Latency",
+    "Route 53 - Health Checks",
+    "Route 53 - Health Checks Hands On",
+    "Routing Policy - Failover",
+    "Routing Policy - Geolocation",
+    "Routing Policy - Geoproximity",
+    "Routing Policy - IP-based",
+    "Routing Policy - Multi Value",
+    "3rd Party Domains & Route 53",
+    "Route 53 Resolvers & Hybrid DNS",
+    "Route 53 - Section Cleanup"
+   ]
+  },
+  {
+   "no": 11,
+   "title": "Classic Solutions Architecture Discussions",
+   "lectures": [
+    "Solutions Architecture Discussions Overview",
+    "WhatsTheTime.com",
+    "MyClothes.com",
+    "MyWordPress.com",
+    "Instantiating applications quickly",
+    "Beanstalk Overview",
+    "Beanstalk Hands On"
+   ]
+  },
+  {
+   "no": 12,
+   "title": "Amazon S3 Introduction",
+   "lectures": [
+    "S3 Overview",
+    "S3 Hands On",
+    "S3 Security: Bucket Policy",
+    "S3 Security: Bucket Policy Hands On",
+    "S3 Website Overview",
+    "S3 Website Hands On",
+    "S3 Versioning",
+    "S3 Versioning - Hands On",
+    "S3 Replication",
+    "S3 Replication Notes",
+    "S3 Replication - Hands On",
+    "S3 Storage Classes Overview",
+    "S3 Storage Classes Hands On",
+    "S3 Express One Zone"
+   ]
+  },
+  {
+   "no": 13,
+   "title": "Advanced Amazon S3",
+   "lectures": [
+    "S3 Lifecycle Rules (with S3 Analytics)",
+    "S3 Lifecycle Rules - Hands On",
+    "S3 Requester Pays",
+    "S3 Event Notifications",
+    "S3 Event Notifications - Hands On",
+    "S3 Performance",
+    "S3 Batch Operations",
+    "S3 Storage Lens"
+   ]
+  },
+  {
+   "no": 14,
+   "title": "Amazon S3 Security",
+   "lectures": [
+    "S3 Encryption",
+    "About DSSE-KMS",
+    "S3 Encryption - Hands On",
+    "S3 Default Encryption",
+    "S3 CORS",
+    "S3 CORS Hands On",
+    "S3 MFA Delete",
+    "S3 MFA Delete Hands On",
+    "S3 Access Logs",
+    "S3 Access Logs - Hands On",
+    "S3 Pre-signed URLs",
+    "S3 Pre-signed URLs - Hands On",
+    "Glacier Vault Lock & S3 Object Lock",
+    "S3 Access Points",
+    "S3 Object Lambda"
+   ]
+  },
+  {
+   "no": 15,
+   "title": "CloudFront & AWS Global Accelerator",
+   "lectures": [
+    "CloudFront Overview",
+    "CloudFront with S3 - Hands On",
+    "CloudFront - ALB/EC2 as an Origin",
+    "CloudFront - Geo Restriction",
+    "CloudFront - Cache Invalidation",
+    "AWS Global Accelerator - Overview",
+    "AWS Global Accelerator - Hands On"
+   ]
+  },
+  {
+   "no": 16,
+   "title": "AWS Storage Extras",
+   "lectures": [
+    "AWS Snow Family Overview",
+    "AWS Snow Family Hands On",
+    "Architecture: Snowball into Glacier",
+    "Amazon FSx",
+    "Amazon FSx - Hands On",
+    "Storage Gateway Overview",
+    "Storage Gateway Hands On",
+    "AWS Transfer Family",
+    "DataSync - Overview",
+    "All AWS Storage Options Compared"
+   ]
+  },
+  {
+   "no": 17,
+   "title": "Decoupling applications: SQS, SNS, Kinesis, Active MQ",
+   "lectures": [
+    "Introduction to Messaging",
+    "Amazon SQS - Standard Queues Overview",
+    "SQS - Standard Queue Hands On",
+    "SQS - Message Visibility Timeout",
+    "SQS - Long Polling",
+    "SQS - FIFO Queues",
+    "SQS + Auto Scaling Group",
+    "Amazon Simple Notification Service (AWS SNS)",
+    "SNS and SQS -  Fan Out Pattern",
+    "SNS - Hands On",
+    "Amazon Kinesis Data Streams",
+    "Amazon Kinesis Data Streams - Hands On",
+    "Amazon Data Firehose",
+    "Amazon Data Firehose - Hands On",
+    "SQS vs SNS vs Kinesis",
+    "Amazon MQ"
+   ]
+  },
+  {
+   "no": 18,
+   "title": "Containers on AWS: ECS, Fargate, ECR & EKS",
+   "lectures": [
+    "Docker Introduction",
+    "Amazon ECS",
+    "Creating ECS Cluster - Hands On",
+    "Creating ECS Service - Hands On",
+    "Amazon ECS - Auto Scaling",
+    "Amazon ECS - Solutions Architectures",
+    "Amazon ECS - Clean Up - Hands On",
+    "Amazon ECR",
+    "Amazon EKS - Overview",
+    "Amazon EKS - Hands On"
+   ]
+  },
+  {
+   "no": 19,
+   "title": "Serverless Overviews from a Solution Architect Perspective",
+   "lectures": [
+    "About the Serverless Section",
+    "Serverless Introduction",
+    "Lambda Overview",
+    "Lambda Hands-On",
+    "Lambda Limits",
+    "Lambda Concurrency",
+    "Lambda Concurrency - Hands On",
+    "Lambda SnapStart",
+    "Lambda@Edge & CloudFront Functions",
+    "Lambda in VPC",
+    "RDS - Invoking Lambda & Event Notifications",
+    "Amazon DynamoDB",
+    "Amazon DynamoDB - Hands-On",
+    "Amazon DynamoDB - Advanced Features",
+    "API Gateway Overview",
+    "API Gateway Basics Hands-On",
+    "Step Functions",
+    "Amazon Cognito Overview"
+   ]
+  },
+  {
+   "no": 20,
+   "title": "Serverless Solution Architecture Discussions",
+   "lectures": [
+    "Mobile Application: MyTodoList",
+    "Serverless Website: MyBlog.com",
+    "MicroServices Architecture",
+    "Software updates distribution"
+   ]
+  },
+  {
+   "no": 21,
+   "title": "Databases in AWS",
+   "lectures": [
+    "Choosing the right database",
+    "RDS",
+    "Aurora",
+    "ElastiCache",
+    "DynamoDB",
+    "S3",
+    "DocumentDB",
+    "Neptune",
+    "Keyspaces (for Apache Cassandra)",
+    "Timestream"
+   ]
+  },
+  {
+   "no": 22,
+   "title": "Data & Analytics",
+   "lectures": [
+    "Athena",
+    "Athena Hands On",
+    "Redshift",
+    "OpenSearch (ex: ElasticSearch)",
+    "EMR",
+    "QuickSight",
+    "Glue",
+    "Lake Formation",
+    "Amazon Managed Service for Apache Flink",
+    "Amazon Managed Service for Apache Flink - Hands On",
+    "MSK - Managed Streaming for Apache Kafka",
+    "Big Data Ingestion Pipeline"
+   ]
+  },
+  {
+   "no": 23,
+   "title": "Machine Learning",
+   "lectures": [
+    "Rekognition Overview",
+    "Transcribe Overview",
+    "Polly Overview",
+    "Translate Overview",
+    "Lex + Connect Overview",
+    "Comprehend Overview",
+    "Comprehend Medical Overview",
+    "SageMaker AI Overview",
+    "Kendra Overview",
+    "Personalize Overview",
+    "Textract Overview",
+    "Machine Learning Summary"
+   ]
+  },
+  {
+   "no": 24,
+   "title": "AWS Monitoring & Audit: CloudWatch, CloudTrail & Config",
+   "lectures": [
+    "AWS Monitoring - Section Introduction",
+    "CloudWatch Metrics",
+    "CloudWatch Logs",
+    "CloudWatch Logs - Hands On",
+    "CloudWatch Logs - Live Tail - Hands On",
+    "CloudWatch Agent & CloudWatch Logs Agent",
+    "CloudWatch Alarms",
+    "CloudWatch Alarms Hands On",
+    "CloudWatch Network Synthetic Monitor",
+    "EventBridge Overview (formerly CloudWatch Events)",
+    "Amazon EventBridge - Hands On",
+    "CloudWatch Insights and Operational Visibility",
+    "CloudTrail Overview",
+    "CloudTrail Hands On",
+    "CloudTrail - EventBridge Integration",
+    "AWS Config - Overview",
+    "AWS Config - Hands On",
+    "CloudTrail vs CloudWatch vs Config"
+   ]
+  },
+  {
+   "no": 25,
+   "title": "Identity and Access Management (IAM) - Advanced",
+   "lectures": [
+    "Organizations - Overview",
+    "Organizations - Hands On",
+    "Organizations - Tag Policies",
+    "IAM - Advanced Policies",
+    "IAM - Resource-based Policies vs IAM Roles",
+    "IAM - Policy Evaluation Logic",
+    "AWS IAM Identity Center",
+    "AWS Directory Services",
+    "AWS Directory Services - Hands On",
+    "AWS Control Tower"
+   ]
+  },
+  {
+   "no": 26,
+   "title": "AWS Security & Encryption: KMS, SSM Parameter Store, Shield, WAF",
+   "lectures": [
+    "AWS Security - Section Introduction",
+    "Encryption 101",
+    "KMS Overview",
+    "KMS Hands On w/ CLI",
+    "KMS - Multi-Region Keys",
+    "S3 Replication with Encryption",
+    "Encrypted AMI Sharing Process",
+    "SSM Parameter Store Overview",
+    "SSM Parameter Store Hands On (CLI)",
+    "AWS Secrets Manager - Overview",
+    "AWS Secrets Manager - Hands On",
+    "AWS Certificate Manager (ACM)",
+    "AWS CloudHSM",
+    "Web Application Firewall (WAF)",
+    "Shield - DDoS Protection",
+    "Firewall Manager",
+    "WAF & Shield - Hands On",
+    "DDoS Protection Best Practices",
+    "Amazon GuardDuty",
+    "Amazon Inspector",
+    "Amazon Macie"
+   ]
+  },
+  {
+   "no": 27,
+   "title": "Networking - VPC",
+   "lectures": [
+    "Section Introduction",
+    "CIDR, Private vs Public IP",
+    "Default VPC Overview",
+    "VPC Overview",
+    "VPC Hands On",
+    "Subnet Overview",
+    "Subnet Hands On",
+    "Internet Gateways & Route Tables",
+    "Internet Gateways & Route Tables Hands On",
+    "Bastion Hosts",
+    "Bastion Hosts Hands On",
+    "NAT Instances",
+    "NAT Instances Hands On",
+    "NAT Gateways",
+    "NAT Gateways Hands On",
+    "Regional NAT Gateway",
+    "NACL & Security Groups",
+    "NACL & Security Groups Hands On",
+    "VPC Peering",
+    "VPC Peering Hands On",
+    "VPC Endpoints",
+    "VPC Endpoints Hands On",
+    "VPC Flow Logs",
+    "VPC Flow Logs Hands On + Athena",
+    "Site to Site VPN, Virtual Private Gateway & Customer Gateway",
+    "Site to Site VPN, Virtual Private Gateway & Customer Gateway Hands On",
+    "Direct Connect & Direct Connect Gateway",
+    "Direct Connect + Site to Site VPN",
+    "Transit Gateway",
+    "VPC Traffic Mirroring",
+    "IPv6 for VPC",
+    "IPv6 for VPC - Hands On",
+    "Egress Only Internet Gateway",
+    "Egress Only Internet Gateway Hands On",
+    "Section Cleanup",
+    "VPC Section Summary",
+    "Networking Costs in AWS",
+    "AWS Network Firewall"
+   ]
+  },
+  {
+   "no": 28,
+   "title": "Disaster Recovery & Migrations",
+   "lectures": [
+    "Disaster Recovery in AWS",
+    "Elastic Disaster Recovery (DRS)",
+    "Database Migration Service (DMS)",
+    "Database Migration Service (DMS) - Hands On",
+    "RDS & Aurora Migrations",
+    "On-Premises Strategies with AWS",
+    "AWS Backup",
+    "AWS Backup - Hands On",
+    "Application Migration Service (MGN)",
+    "Transferring Large Datasets into AWS",
+    "VMware Cloud on AWS"
+   ]
+  },
+  {
+   "no": 29,
+   "title": "More Solution Architectures",
+   "lectures": [
+    "Event Processing in AWS",
+    "Caching Strategies in AWS",
+    "Blocking an IP Address in AWS",
+    "High Performance Computing (HPC) on AWS",
+    "EC2 Instance High Availability"
+   ]
+  },
+  {
+   "no": 30,
+   "title": "Other Services",
+   "lectures": [
+    "Other Services Section Introduction",
+    "CloudFormation Intro",
+    "CloudFormation - Hands On",
+    "CloudFormation - Service Role",
+    "Amazon SES",
+    "Amazon Pinpoint",
+    "SSM Session Manager",
+    "SSM Other Services",
+    "AWS Cost Explorer",
+    "AWS Cost Anomaly Detection",
+    "AWS Outposts",
+    "AWS Batch",
+    "Amazon AppFlow",
+    "AWS Amplify",
+    "Instance Scheduler on AWS"
+   ]
+  },
+  {
+   "no": 31,
+   "title": "WhitePapers and Architectures - AWS Certified Solutions Architect Associate",
+   "lectures": [
+    "WhitePaper Section Introduction",
+    "AWS Well-Architected Framework & Well-Architected Tool",
+    "AWS Trusted Advisor Overview + Hands-On",
+    "Examples of Architecture - AWS Certified Solutions Architect Associate"
+   ]
+  },
+  {
+   "no": 32,
+   "title": "Preparing for the Exam + Practice Exam - AWS Certified Solutions Architect Assoc",
+   "lectures": [
+    "Exam Preparation - Section Introduction",
+    "State of Learning Checkpoint - AWS Certified Solutions Architect Associate",
+    "Exam Tips - AWS Certified Solutions Architect Associate",
+    "Links to Whitepapers",
+    "Exam Walkthrough and Signup",
+    "Save 50% on your AWS Exam Cost!",
+    "Get an Extra 30 Minutes on your AWS Exam - Non Native English Speakers only",
+    "How does the exam work?"
+   ]
+  },
+  {
+   "no": 33,
+   "title": "Congratulations - AWS Certified Solutions Architect Associate",
+   "lectures": [
+    "AWS Certification Paths",
+    "Congratulations",
+    "Bonus Lecture"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+/* ---------- additions for the AWS guide ---------- */
+.facts dd small { display: block; font-weight: 400; font-size: 12px; color: var(--ink-3); }
+span.lab { cursor: default; font-family: var(--font-body); }
+span.lab:hover { border-color: var(--line); color: var(--ink-2); }
+.labs { row-gap: 6px; }
+.prose details.quiz { border-top: 1px solid var(--line); }
+.prose details.quiz:last-of-type { border-bottom: 1px solid var(--line); }
+.prose .quiz-q p, .prose .quiz-a p { margin: 0 0 6px; }
+.prose .quiz-a { padding-left: 42px; }
+.prose .quiz-q ol, .prose .quiz-q ul { margin: 6px 0 0; }
+.gl-cat { margin-top: 28px; }
+.prose table td ul, .prose table td ol { margin: 0; padding-left: 1.1em; }
+.dg .t-store .n-box { fill: var(--diary-bg); stroke: var(--diary-edge); }
