@@ -1,5 +1,5 @@
 // 화담숲 상품 페이지가 #hwadam-auto=날짜_시간_매수 를 달고 열리면
-// 날짜 → 회차 → 입장권 성인 → 일반 → 매수 → 구매하기 순서로 눌러 주문서를 띄운다. 결제는 사람이 한다.
+// 날짜 → 회차 → 입장권 성인 → 일반 → 매수 → 모노레일(2구간) → 구매하기 순서로 눌러 주문서를 띄운다. 결제는 사람이 한다.
 // 끝에 _dry 를 붙이면 구매하기 직전에 멈춘다 (시험용).
 // 사이트가 뜨면서 주소의 # 부분을 지워 버려서, 페이지 스크립트보다 먼저(document_start) 읽어 둔다.
 // NOL 로그인이 풀려 있으면 네이버로 로그인하러 갔다가(login.js) 돌아와서 이어 간다.
@@ -53,6 +53,71 @@
   async function settle(find, ok, ms = 2000) {
     return (await until(() => { const e = find(); return e && ok(e) ? e : null; }, ms)) || find();
   }
+  const byText = (s) => buttons().find((e) => text(e) === s);
+
+  // 매수 입력칸을 qty 까지 올린다. 옵션을 고른 직후엔 플러스 버튼이 잠깐 비활성이라, 눌릴 수 있게 될 때까지 기다렸다가 누른다
+  // (예전엔 비활성을 보자마자 포기해서 2장 알림에도 1장으로 넘어갔다 — 10/17·10/18 세 번)
+  // 입장권·모노레일 단계마다 플러스 버튼이 따로 있고 지나간 단계 것은 숨어 있어서 보이는 것만 누른다
+  async function setQty(input, qty) {
+    const plusReady = () => {
+      const p = buttons('button[aria-label="플러스 버튼"]')[0];
+      return p && !p.disabled && p.getAttribute("aria-disabled") !== "true" ? p : null;
+    };
+    for (let i = 0; i < 10 && Number(input.value) < qty; i++) {
+      const plus = await until(plusReady, 2000);
+      if (!plus) break;
+      const before = Number(input.value);
+      plus.click();
+      await until(() => Number(input.value) !== before || null, 1000);
+    }
+  }
+
+  // 입장권을 고른 뒤 같은 주문에 모노레일을 더한다. 모노레일만 따로는 못 사고, 입장 20분 뒤 회차부터, 입장권 매수까지만 고를 수 있다.
+  // '모노레일 선택' → (화담채를 안 골라서 뜨는 확인 창의) '모노레일로 이동' → 구간 → qty 장 남은 가장 이른 회차 → 성인 → 매수.
+  // 고르면 설명을, 못 고르면 '이전'으로 입장권 단계에 돌아가 null 을 돌려준다 (그러면 입장권만 사고 모노레일은 나중에 추가상품으로).
+  const MONO_SEGMENT = "2구간(1-3)";
+  async function addMonorail(qty) {
+    const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0];
+    const back = async (why) => {
+      say(`${why} 모노레일 없이 입장권만 구매하기로 가요.`);
+      // 반쯤 고른 모노레일이 주문에 딸려 가지 않게 지우고 돌아간다
+      buttons('button[aria-label$="옵션 삭제"]').forEach((e) => e.click());
+      byText("이전")?.click();
+      await until(() => byText("모노레일 선택"), 3000);
+      return null;
+    };
+    const next = byText("모노레일 선택");
+    if (!next) return back("'모노레일 선택' 버튼이 없어요.");
+    next.click();
+    const go = await until(() => byText("모노레일로 이동") || segment(), 3000);
+    if (go && text(go) === "모노레일로 이동") go.click();
+    const seg = await until(segment, 5000);
+    if (!seg) return back(`모노레일 ${MONO_SEGMENT}을 못 찾았어요.`);
+    seg.click();
+    lap("모노레일 구간");
+
+    // 회차 — 입장권과 같은 모양 <button role="option" aria-label="09:00 선택">09:002매</button>, 품절이면 '마감'.
+    // 지나간 입장권 회차 버튼도 숨은 채 남아 있어서 보이는 것만 본다. 재고를 받아오기 전일 수 있어 2초까지 기다린다
+    const slots = () => buttons('button[role="option"]').filter((e) => /^\d{2}:\d{2} 선택$/.test(e.getAttribute("aria-label") || ""));
+    // 글자가 '17:081매' 처럼 붙어 있어서 앞의 시각(5글자)을 떼고 읽는다
+    const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
+    await until(() => slots().length || null, 5000);
+    const slot = await until(() => slots().find((e) => left(e) >= qty), 2000);
+    if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`);
+    const time = slot.getAttribute("aria-label").slice(0, 5);
+    slot.click();
+    lap("모노레일 회차");
+
+    const adult = await until(() => buttons('button[role="option"]').find((e) => text(e).startsWith("모노레일 성인") && !e.disabled), 3000);
+    if (!adult) return back("'모노레일 성인'을 못 찾았어요.");
+    adult.click();
+    const input = await until(() => buttons('input[aria-label="숫자 입력"]')[0], 3000);
+    if (!input) return back("모노레일 매수 입력칸을 못 찾았어요.");
+    await setQty(input, qty);
+    if (Number(input.value) !== qty) return back(`모노레일을 ${qty}장으로 못 맞췄어요 (지금 ${input.value}장).`);
+    lap("모노레일 매수");
+    return `모노레일 ${MONO_SEGMENT} ${time} ${qty}장`;
+  }
 
   async function run() {
     // 로그인하러 다녀오는 사이 # 이 없어질 수 있어 진행할 회차를 저장소에 맡겨 둔다 (3분 안에 돌아와야 유효)
@@ -98,7 +163,8 @@
         await until(() => calendarOpen() || sheetOpen(), 600);
       }
     }
-    if (!calendarOpen() && innerWidth > 700) {
+    // 옵션 창이 막 열렸으면 달력이 늦게 그려질 수 있어 3초까지 기다려 보고 판단한다
+    if (!calendarOpen() && innerWidth > 700 && !(await until(calendarOpen, 3000))) {
       stop("창이 넓으면 옵션 창이 안 열려요. 창 폭을 휴대폰처럼 좁게 줄이고 다시 열어 주세요.");
     }
     await waitFor(calendarOpen, "날짜 달력", 3000);
@@ -140,27 +206,19 @@
     lap("일반");
 
     // 6. 매수
-    const input = await waitFor(() => buttons('input[aria-label="숫자 입력"]')[0], "매수 입력칸");
-    // 회차를 고른 직후엔 플러스 버튼이 잠깐 비활성이라, 눌릴 수 있게 될 때까지 기다렸다가 누른다
-    // (예전엔 비활성을 보자마자 포기해서 2장 알림에도 1장으로 넘어갔다 — 10/17·10/18 세 번)
-    const plusReady = () => {
-      const p = document.querySelector('button[aria-label="플러스 버튼"]');
-      return p && !p.disabled && p.getAttribute("aria-disabled") !== "true" ? p : null;
-    };
-    for (let i = 0; i < 10 && Number(input.value) < qty; i++) {
-      const plus = await until(plusReady, 2000);
-      if (!plus) break;
-      const before = Number(input.value);
-      plus.click();
-      await until(() => Number(input.value) !== before || null, 1000);
-    }
+    const entryInput = await waitFor(() => buttons('input[aria-label="숫자 입력"]')[0], "매수 입력칸");
+    await setQty(entryInput, qty);
     lap("매수");
     // 목표 매수를 못 채우면 구매하기를 누르지 않는다 (남은 표가 정말 모자라거나 버튼이 안 눌린 경우)
-    if (Number(input.value) !== qty) {
-      stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${input.value}장). 남은 표가 모자랄 수 있어요.`);
+    if (Number(entryInput.value) !== qty) {
+      stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${entryInput.value}장). 남은 표가 모자랄 수 있어요.`);
     }
 
-    // 7. 구매하기 — 매수 입력칸과 같은 창 안의 버튼
+    // 7. 모노레일. 못 고르면 입장권만 산다
+    const mono = await addMonorail(qty);
+
+    // 8. 구매하기 — 지금 보이는 단계(모노레일 또는 입장권)의 매수 입력칸과 같은 창 안의 버튼
+    const input = buttons('input[aria-label="숫자 입력"]')[0] || entryInput;
     let box = input.parentElement, buy = null;
     while (box && !buy) {
       buy = [...box.querySelectorAll("button")].find((e) => visible(e) && text(e) === "구매하기" && !e.disabled);
@@ -170,10 +228,10 @@
     if (dry) {
       buy.style.outline = "4px solid #f59e0b";
       const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
-      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${input.value}장${took()}`, "#b45309");
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono || "모노레일 없음"}${took()}`, "#b45309");
     }
     lap("구매하기");
-    say(`구매하기 누름 — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
+    say(`구매하기 누름 (${mono || "모노레일 없이 입장권만"}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
     // 주문서로 넘어가면 이 페이지가 사라진다. 그대로 남아 창이 뜨면 ('선택한 상품이 매진되었어요' 등) 무엇인지 남긴다
     const notices = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((e) => visible(e) && text(e))
       .concat([...document.querySelectorAll("body *")].filter((e) => !e.children.length && /매진|품절|초기화|다시 선택/.test(e.textContent) && visible(e)));

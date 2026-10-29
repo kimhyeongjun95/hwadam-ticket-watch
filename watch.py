@@ -31,10 +31,11 @@ SETTINGS = {  # 이름: (기본값, 설명)
 }
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
 # 모노레일 탑승권. 입장권과 같이 사는 옵션과, 입장권이 이미 있으면 따로 사는 추가상품 두 곳에서 판다.
-# TARGET_DATES 날짜에 MONORAIL_EARLIEST 이상 MONORAIL_LATEST 전 탑승 회차(5분 간격)가 새로 열리면 알린다. 자동 진행은 없음.
-MONORAIL_APIS = {
-    "입장권과 같이": "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480708",
-    "추가상품": "https://leisure-web-api.yanolja.com/product/v1/products/10367231/option-groups/10480710",
+# TARGET_DATES 날짜에 MONORAIL_EARLIEST 이상 MONORAIL_LATEST 전 탑승 회차(5분 간격)가 새로 열리면 알린다.
+# 재고는 구간마다 따로라 2구간(1-3) 옵션 번호로 조회한다 (빼면 세 구간을 합친 수가 온다).
+MONORAIL_APIS = {  # 파는 곳: (옵션 그룹 주소, 2구간 옵션 번호)
+    "입장권과 같이": ("https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480708", 14253600),
+    "추가상품": ("https://leisure-web-api.yanolja.com/product/v1/products/10367231/option-groups/10480710", 14253640),
 }
 MONORAIL_EARLIEST, MONORAIL_LATEST = "09:00", "09:15"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
@@ -159,11 +160,11 @@ def fetch(dates):
 def fetch_monorail(dates):
     """'파는 곳|날짜' 별로 노리는 시각대에 재고가 있는 [(시간, 수량)]"""
     result = {}
-    for kind, base in MONORAIL_APIS.items():
+    for kind, (base, segment) in MONORAIL_APIS.items():
         schedules = api(f"/schedules?startDate={min(dates)}&endDate={max(dates)}", base)
         status = {s["date"]: s["scheduleStatusCode"] for s in schedules}
         for d in dates:
-            rounds = api(f"/rounds?date={d}", base) if status.get(d) == "IN_SALE" else []
+            rounds = api(f"/rounds?date={d}&productOptionItemIds={segment}", base) if status.get(d) == "IN_SALE" else []
             result[f"{kind}|{d}"] = [(r["time"], r["inventoryQuantity"]) for r in rounds
                                      if r["inventoryQuantity"] > 0
                                      and MONORAIL_EARLIEST <= r["time"] < MONORAIL_LATEST]
@@ -182,7 +183,7 @@ def find_monorail_opened(cur, prev_open):
             lines.append(f"{label(d)} {kind}: {', '.join(f'{t}({q})' for t, q in new)}")
     if not lines:
         return cur_open, None
-    lines.append("모노레일은 입장권과 같은 권종만 살 수 있어요. 입장권이 이미 있으면 추가상품으로.")
+    lines.append("2구간(1-3) 기준. 모노레일은 입장 20분 뒤 회차부터, 입장권과 같은 권종만 살 수 있어요. 입장권이 이미 있으면 추가상품으로.")
     return cur_open, (f"화담숲 모노레일 {' · '.join(dict.fromkeys(days))} {MONORAIL_EARLIEST}대 열림!",
                       "\n".join(lines))
 
