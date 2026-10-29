@@ -30,6 +30,13 @@ SETTINGS = {  # 이름: (기본값, 설명)
     "QUANTITY": ("2", "살 매수"),
 }
 API = "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480706"
+# 모노레일 탑승권. 입장권과 같이 사는 옵션과, 입장권이 이미 있으면 따로 사는 추가상품 두 곳에서 판다.
+# TARGET_DATES 날짜에 MONORAIL_EARLIEST 이상 MONORAIL_LATEST 전 탑승 회차(5분 간격)가 새로 열리면 알린다. 자동 진행은 없음.
+MONORAIL_APIS = {
+    "입장권과 같이": "https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480708",
+    "추가상품": "https://leisure-web-api.yanolja.com/product/v1/products/10367231/option-groups/10480710",
+}
+MONORAIL_EARLIEST, MONORAIL_LATEST = "09:00", "09:15"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
 API_HEADERS = {
     # Cloudflare 가 파이썬 기본 User-Agent 는 403 으로 막는다.
@@ -115,14 +122,16 @@ def describe(e):
     return f"HTTP {e.code}" if isinstance(e, urllib.error.HTTPError) else repr(e)
 
 
-def api(path):
+def api(path, base=API):
+    # 입장권 말고 다른 옵션 그룹이면 기록에서 구분되게 상품·옵션 그룹 번호를 앞에 붙인다
+    where = path if base == API else base.split("/products/")[1] + path
     for attempt in range(2):
         try:
-            body = http(API + path, headers=API_HEADERS)["body"]
-            RAW.append({"path": path, "body": body})
+            body = http(base + path, headers=API_HEADERS)["body"]
+            RAW.append({"path": where, "body": body})
             return body
         except Exception as e:
-            RAW.append({"path": path, "error": describe(e)})
+            RAW.append({"path": where, "error": describe(e)})
             if attempt:
                 raise
             time.sleep(5)
@@ -145,6 +154,37 @@ def fetch(dates):
                 pass  # 회차 조회가 실패해도 예약 가능 알림은 보낸다
         result[d] = {"status": st, "slots": slots, "rounds_ok": rounds_ok}
     return result
+
+
+def fetch_monorail(dates):
+    """'파는 곳|날짜' 별로 노리는 시각대에 재고가 있는 [(시간, 수량)]"""
+    result = {}
+    for kind, base in MONORAIL_APIS.items():
+        schedules = api(f"/schedules?startDate={min(dates)}&endDate={max(dates)}", base)
+        status = {s["date"]: s["scheduleStatusCode"] for s in schedules}
+        for d in dates:
+            rounds = api(f"/rounds?date={d}", base) if status.get(d) == "IN_SALE" else []
+            result[f"{kind}|{d}"] = [(r["time"], r["inventoryQuantity"]) for r in rounds
+                                     if r["inventoryQuantity"] > 0
+                                     and MONORAIL_EARLIEST <= r["time"] < MONORAIL_LATEST]
+    return result
+
+
+def find_monorail_opened(cur, prev_open):
+    """노리는 모노레일 회차가 새로 열렸으면 (제목, 본문). 돌려주는 cur_open 이 다음 번 prev_open 이 된다."""
+    cur_open = {k: sorted(t for t, _ in slots) for k, slots in cur.items()}
+    lines, days = [], []
+    for k, slots in cur.items():
+        new = [(t, q) for t, q in slots if t not in prev_open.get(k, [])]
+        if new:
+            kind, d = k.split("|")
+            days.append(label(d))
+            lines.append(f"{label(d)} {kind}: {', '.join(f'{t}({q})' for t, q in new)}")
+    if not lines:
+        return cur_open, None
+    lines.append("모노레일은 입장권과 같은 권종만 살 수 있어요. 입장권이 이미 있으면 추가상품으로.")
+    return cur_open, (f"화담숲 모노레일 {' · '.join(dict.fromkeys(days))} {MONORAIL_EARLIEST}대 열림!",
+                      "\n".join(lines))
 
 
 def notify(title, message, priority=3, pc_url=None):
@@ -287,7 +327,18 @@ def main():
         title, message, pc_url = alert
         notify(title, message, 5, pc_url=pc_url)
 
-    save({"dates": {d: cur[d]["status"] for d in dates}, "open": cur_open})
+    # 모노레일 조회가 실패해도 입장권 상태는 저장하고, 모노레일은 지난 상태를 그대로 둔다
+    mono_open = state.get("monorail", {})
+    try:
+        mono = fetch_monorail(dates)
+        print("모노레일", {k: v for k, v in mono.items() if v} or "노리는 회차 없음")
+        mono_open, alert = find_monorail_opened(mono, mono_open)
+        if alert:
+            notify(*alert, 5)
+    except Exception as e:
+        print(f"모노레일 조회 실패: {describe(e)}")
+
+    save({"dates": {d: cur[d]["status"] for d in dates}, "open": cur_open, "monorail": mono_open})
 
 
 def save(state):
