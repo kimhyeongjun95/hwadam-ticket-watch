@@ -3,11 +3,17 @@
 // 끝에 _dry 를 붙이면 구매하기 직전에 멈춘다 (시험용).
 // 사이트가 뜨면서 주소의 # 부분을 지워 버려서, 페이지 스크립트보다 먼저(document_start) 읽어 둔다.
 // NOL 로그인이 풀려 있으면 네이버로 로그인하러 갔다가(login.js) 돌아와서 이어 간다.
+// #hwadam-standby 로 열리면 대기 창: 수신기가 미리 띄워 Dock 에 내려 둔 창으로, 알림이 오면 background.js 를 거쳐
+// #hwadam-auto=… 주소를 받아 이미 떠 있는 페이지에서 바로 고른다 (페이지를 새로 읽지 않아 몇 초 빠름).
 (() => {
   const SPEC = /^#hwadam-auto=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})_(\d+)(_dry)?$/;
+  const STANDBY = "#hwadam-standby";
   const fromHash = SPEC.test(location.hash) ? location.hash : null;
+  // 10분마다 새로 읽거나 로그인하고 돌아와도(이때는 # 이 없을 수 있음) 대기 창인 걸 알도록 탭에 표시해 둔다
+  if (location.hash === STANDBY) sessionStorage.setItem("hwadam-standby", "1");
+  const standby = !fromHash && sessionStorage.getItem("hwadam-standby") === "1";
   // 새로고침해도 다시 돌지 않게 표시를 지운다
-  if (fromHash) history.replaceState(null, "", location.pathname + location.search);
+  if (fromHash || location.hash === STANDBY) history.replaceState(null, "", location.pathname + location.search);
 
   const banner = document.createElement("div");
   banner.style.cssText =
@@ -24,8 +30,10 @@
     try { chrome.runtime.sendMessage({ log: text, done }); } catch (_) {}
   };
   // 단계마다 페이지를 열기 시작한 뒤 몇 초째인지 적어 두고 끝날 때 로그에 붙인다 (어디가 느린지 보려고)
+  // 대기 창은 알림이 온 때부터 잰다
   const laps = [];
-  const lap = (name) => laps.push(`${name} ${(performance.now() / 1000).toFixed(1)}`);
+  let t0 = 0;
+  const lap = (name) => laps.push(`${name} ${((performance.now() - t0) / 1000).toFixed(1)}`);
   const took = () => (laps.length ? ` [초: ${laps.join(" · ")}]` : "");
   const stop = (text) => { say(text + took(), "#b91c1c", "fail"); throw new Error(text); };
 
@@ -98,12 +106,13 @@
     lap("모노레일 구간");
 
     // 회차 — 입장권과 같은 모양 <button role="option" aria-label="09:00 선택">09:002매</button>, 품절이면 '마감'.
-    // 지나간 입장권 회차 버튼도 숨은 채 남아 있어서 보이는 것만 본다. 재고를 받아오기 전일 수 있어 2초까지 기다린다
+    // 지나간 입장권 회차 버튼도 숨은 채 남아 있어서 보이는 것만 본다. 회차가 뜨면 0.3초만 더 보고 없으면 바로 입장권만 산다
+    // (예전엔 재고를 늦게 받아올까 봐 2초 기다렸는데, 모노레일이 없을 때마다 2초씩 늦어져 표를 놓쳤다 — 10/30)
     const slots = () => buttons('button[role="option"]').filter((e) => /^\d{2}:\d{2} 선택$/.test(e.getAttribute("aria-label") || ""));
     // 글자가 '17:081매' 처럼 붙어 있어서 앞의 시각(5글자)을 떼고 읽는다
     const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
     await until(() => slots().length || null, 5000);
-    const slot = await until(() => slots().find((e) => left(e) >= qty), 2000);
+    const slot = await until(() => slots().find((e) => left(e) >= qty), 300);
     if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`);
     const time = slot.getAttribute("aria-label").slice(0, 5);
     slot.click();
@@ -120,14 +129,57 @@
     return `모노레일 ${MONO_SEGMENT} ${time} ${qty}장`;
   }
 
-  async function run() {
+  const isLoggedIn = () => {
+    try {
+      return JSON.parse(document.getElementById("__NEXT_DATA__").textContent).props.pageProps.isLoggedIn;
+    } catch (_) {
+      return true; // 못 읽으면 일단 진행 (안 돼 있으면 구매 단계에서 로그인 창이 뜬다)
+    }
+  };
+  const goLogin = (spec) => {
+    const back = location.origin + location.pathname + spec;
+    location.href = `https://accounts.yanolja.com/?service=yanolja&redirectUrl=${encodeURIComponent(back)}`;
+  };
+
+  // 대기 창: 알림을 기다린다. 로그인 상태·화면이 오래되지 않게 10분마다 새로 읽고,
+  // 로그인이 풀려 있으면 알림이 오기 전에 미리 로그인해 둔다
+  async function waitInStandby() {
+    let used = false;
+    const connect = () => {
+      const port = chrome.runtime.connect({ name: "standby" });
+      port.onMessage.addListener(({ url }) => {
+        const spec = "#" + (url || "").split("#")[1];
+        if (used || !SPEC.test(spec)) return;
+        used = true;
+        port.disconnect();
+        sessionStorage.removeItem("hwadam-standby"); // 한 번 쓰면 대기 창이 아니다
+        t0 = performance.now();
+        run(spec).catch((e) => console.warn("[hwadam-auto]", e));
+      });
+      // 확장이 새로 읽히거나 서비스 워커가 꺼지면 끊긴다 → 다시 붙는다
+      port.onDisconnect.addListener(() => { if (!used) setTimeout(connect, 1000); });
+    };
+    connect();
+    setTimeout(() => { if (!used) location.reload(); }, 10 * 60e3);
+    const { pending } = await chrome.storage.local.get("pending");
+    const loginTried = pending?.spec === STANDBY && Date.now() - pending.at < 3 * 60e3;
+    if (pending?.spec === STANDBY) await chrome.storage.local.remove("pending");
+    if (document.readyState === "loading") await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
+    if (isLoggedIn()) return;
+    if (loginTried) return say("대기 창: 네이버로 로그인했는데도 NOL 로그인이 안 됐어요. 직접 로그인해 주세요.", "#b91c1c", "fail");
+    say("대기 창: NOL 로그인이 풀려 있어 미리 로그인하는 중…");
+    await chrome.storage.local.set({ pending: { spec: STANDBY, at: Date.now(), loginTried: true } });
+    goLogin(STANDBY);
+  }
+
+  async function run(hashSpec) {
     // 로그인하러 다녀오는 사이 # 이 없어질 수 있어 진행할 회차를 저장소에 맡겨 둔다 (3분 안에 돌아와야 유효)
     const { pending } = await chrome.storage.local.get("pending");
-    const resumed = pending && Date.now() - pending.at < 3 * 60e3 ? pending : null;
-    const spec = fromHash || resumed?.spec;
+    const resumed = pending && SPEC.test(pending.spec) && Date.now() - pending.at < 3 * 60e3 ? pending : null;
+    const spec = hashSpec || resumed?.spec;
     if (!spec) return;
     const loginTried = resumed?.spec === spec && resumed.loginTried;
-    if (pending) await chrome.storage.local.remove("pending");
+    if (resumed || hashSpec) await chrome.storage.local.remove("pending");
     const [, y, mo, d, time, qtyText, dry] = spec.match(SPEC);
     const qty = Number(qtyText);
 
@@ -137,17 +189,11 @@
 
     // 0. 로그인 확인. 풀려 있으면 NOL 로그인 화면으로 보내고, 거기서 login.js 가 '네이버로 시작하기'를 누른다.
     //    로그인이 끝나면 돌아올 주소에 # 을 붙여 둬서 이 페이지로 돌아와 이어 간다.
-    let loggedIn = true; // 못 읽으면 일단 진행 (안 돼 있으면 구매 단계에서 로그인 창이 뜬다)
-    try {
-      loggedIn = JSON.parse(document.getElementById("__NEXT_DATA__").textContent).props.pageProps.isLoggedIn;
-    } catch (_) {}
-    if (!loggedIn) {
+    if (!isLoggedIn()) {
       if (loginTried) stop("네이버로 로그인했는데도 NOL 로그인이 안 됐어요. 직접 로그인 후 진행해 주세요.");
       say("NOL 로그인이 풀려 있어 네이버로 로그인하는 중…");
       await chrome.storage.local.set({ pending: { spec, at: Date.now(), loginTried: true } });
-      const back = location.origin + location.pathname + spec;
-      location.href = `https://accounts.yanolja.com/?service=yanolja&redirectUrl=${encodeURIComponent(back)}`;
-      return;
+      return goLogin(spec);
     }
 
     // 1. 옵션 창 열기. 버튼은 서버가 그린 HTML 에 먼저 보이지만 React 가 붙기 전에는 눌러도 반응이 없어서,
@@ -260,5 +306,5 @@
     say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c", "fail");
   }
 
-  run().catch((e) => console.warn("[hwadam-auto]", e));
+  (standby ? waitInStandby() : run(fromHash)).catch((e) => console.warn("[hwadam-auto]", e));
 })();

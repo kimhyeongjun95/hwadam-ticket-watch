@@ -39,6 +39,10 @@ try:
 except (OSError, ValueError):
     POLL_EVERY = 20  # 초
 REOPEN_AFTER = 10 * 60  # 같은 회차는 이 시간(초) 안에 다시 알려도 크롬을 또 열지 않는다
+# 알림이 오면 바로 고르도록 상품 페이지를 미리 띄워 Dock 에 내려 둔 창 (대기 창). 창 번호를 적어 둔다 (git 에 안 올림)
+STANDBY_FILE = os.path.join(ROOT, ".standby-window")
+STANDBY_HASH = "#hwadam-standby"
+STANDBY_REARM = 2 * 60  # 초. 대기 창을 쓰고 나서 이만큼 뒤에 새로 띄운다 (그 창에서 결제 중일 수 있어서)
 LOG_FILE = os.path.expanduser("~/Library/Logs/hwadam-listener.log")  # install.sh 가 launchd 출력을 여기로 보낸다
 DASHBOARD = os.path.join(HERE, "dashboard.html")  # http://127.0.0.1:8789/ 상태·로그 화면
 REPO = "kimhyeongjun95/hwadam-ticket-watch"
@@ -69,12 +73,82 @@ def front_app():
     return r.stdout.split("=")[-1].strip().strip('"')
 
 
-def open_in_chrome(url):
-    # PC 폭에서는 '옵션 선택하기'가 창을 안 열고 스크롤만 해서, 휴대폰 폭(480px)의 새 창으로 연다.
-    # 크롬에서 마지막으로 쓰던 프로필(= NOL 로그인된 프로필)로 열린다.
-    # 하던 일을 가리지 않게 창은 바로 내려(최소화) 두고 쓰던 앱을 다시 앞으로 돌린다.
-    # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다
+def chrome(script):
+    """크롬에 AppleScript 를 보내고 결과 글자를 돌려준다 (실패하면 None)"""
+    r = subprocess.run(["osascript", "-e", f'tell application "Google Chrome"\n{script}\nend tell'],
+                       capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def new_window(url):
+    """PC 폭에서는 '옵션 선택하기'가 창을 안 열고 스크롤만 해서, 휴대폰 폭(480px)의 새 창으로 연다.
+    크롬에서 마지막으로 쓰던 프로필(= NOL 로그인된 프로필)로 열린다.
+    하던 일을 가리지 않게 창은 바로 내려(최소화) 두고 쓰던 앱을 다시 앞으로 돌린다. 창 번호를 돌려준다"""
     before = front_app()
+    wid = chrome(f'''set w to make new window
+  set bounds of w to {{60, 40, 540, 980}}
+  set URL of active tab of w to "{url}"
+  set minimized of w to true
+  return id of w''')
+    if wid and before and before != "com.google.Chrome":
+        subprocess.run(["osascript", "-e", f'tell application id "{before}" to activate'], check=False)
+    return wid
+
+
+def read_standby():
+    try:
+        with open(STANDBY_FILE) as f:
+            return int(f.read())
+    except (OSError, ValueError):
+        return None
+
+
+def write_standby(wid):
+    if wid:
+        with open(STANDBY_FILE, "w") as f:
+            f.write(str(wid))
+    elif os.path.exists(STANDBY_FILE):
+        os.remove(STANDBY_FILE)
+
+
+def standby_state(wid):
+    """대기 창 상태: "ready"(상품 페이지에서 내려가 있음), "busy"(내려간 채 로그인하러 감), "gone"(닫혔거나 사람이 열어 봄)"""
+    out = chrome(f'''if not (exists window id {wid}) then return "gone"
+  set w to window id {wid}
+  return (minimized of w as text) & " " & (URL of active tab of w)''')
+    if not out or not out.startswith("true "):
+        return "gone"
+    return "ready" if out[5:].startswith(watch.PRODUCT_URL) else "busy"
+
+
+# 대기 창에 알림 넘기기. AppleScript 로 주소를 바꾸면 내려 둔 창이 올라와 버려서 (10/30) 확장을 거친다:
+# 대기 창의 확장(background.js)이 /standby/wait 로 계속 기다리고 있다가 받으면 바로 고르고 /standby/ack 로 받았다고 알린다
+standby_cond = threading.Condition()
+standby_queue = []  # [(주소, 넣은 시각)]
+standby_seen = 0  # 확장이 마지막으로 /standby/wait 를 부른 시각
+standby_ack = threading.Event()
+
+
+def hand_to_standby(url):
+    """대기 창이 기다리고 있으면 주소를 넘기고 1.5초 안에 받았다고 하면 True"""
+    if time.time() - standby_seen > 30:
+        return False
+    standby_ack.clear()
+    with standby_cond:
+        standby_queue[:] = [(url, time.time())]
+        standby_cond.notify_all()
+    if standby_ack.wait(1.5):
+        return True
+    with standby_cond:
+        standby_queue.clear()  # 늦게라도 가져가서 두 창에서 같이 돌지 않게
+    return False
+
+
+def open_in_chrome(url):
+    # 대기 창이 있으면 이미 떠 있는 페이지에서 바로 고르게 한다. 없거나 반응이 없으면 새 창으로.
+    # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다
+    global last_open
+    last_open = time.time()
     # Playwright 같은 자동화 도구가 띄운 크롬(--user-data-dir 로 따로 뜸)이 있으면 osascript 가 그쪽으로 가서
     # 확장도 로그인도 없는 창이 열린다 (10/30). 고칠 길이 없어 알리기만 한다
     other = subprocess.run(["pgrep", "-f", "Google Chrome.app/Contents/MacOS/Google Chrome .*--user-data-dir"],
@@ -82,20 +156,13 @@ def open_in_chrome(url):
     if other:
         log(f"자동화용 크롬이 떠 있음 (pid {', '.join(other)}) — 엉뚱한 크롬에 열릴 수 있음")
         notify_mac("자동화용 크롬이 떠 있어 평소 크롬이 아닌 곳에 열릴 수 있어요. 그 크롬을 닫아 주세요.", "Basso")
-    script = f'''
-tell application "Google Chrome"
-  set w to make new window
-  set bounds of w to {{60, 40, 540, 980}}
-  set URL of active tab of w to "{url}"
-  set minimized of w to true
-end tell'''
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
-    if r.returncode != 0:
+    if hand_to_standby(url):
+        write_standby(None)  # 한 번 쓰면 끝 (그 창에서 주문·결제를 한다)
+        log("대기 창에서 바로 진행")
+    elif not new_window(url):
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
-        log(f"좁은 창 열기 실패, 일반 탭으로 엶: {r.stderr.strip()}")
+        log("좁은 창 열기 실패, 일반 탭으로 엶")
         subprocess.run(["open", "-a", "Google Chrome", url], check=False)
-    elif before and before != "com.google.Chrome":
-        subprocess.run(["osascript", "-e", f'tell application id "{before}" to activate'], check=False)
     notify_mac("예약 가능! 뒤에서 주문서를 띄우는 중이에요. 뜨면 크롬이 앞으로 나와요.", "Glass")
     # 확장이 끝(주문서 뜸·멈춤)을 알려 오지 않은 채 1분이 지나면 숨은 창에서 막힌 것일 수 있으니 알린다
     opened = time.time()
@@ -115,6 +182,7 @@ last_poll = ""  # 맥 조회 마지막 결과 (/poll 과 상태 화면에 보여
 last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막대에 띄움
 paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
 last_done = 0  # 확장이 자동 진행 끝(주문서 뜸·멈춤)을 마지막으로 알려 온 시각
+last_open = 0  # 마지막으로 자동 진행 창을 연 시각
 opened_lock = threading.Lock()
 settings_lock = threading.Lock()
 settings_sync = {"at": "", "error": ""}  # GitHub 변수와 마지막으로 맞춘 시각, 실패 이유
@@ -297,8 +365,23 @@ class LocalServer(BaseHTTPRequestHandler):
             self.reply(swiftbar_menu().encode(), "text/plain")
         elif path == "/api/settings":
             self.reply_json(settings_view())
+        elif path == "/standby/wait":
+            self.standby_wait()
         else:
             self.send_error(404)
+
+    def standby_wait(self):
+        """대기 창 확장이 부른다: 20초까지 알림을 기다려 주소를 주거나 204 (확장이 바로 다시 부름)"""
+        global standby_seen
+        standby_seen = time.time()
+        with standby_cond:
+            standby_cond.wait_for(lambda: standby_queue, 20)
+            item = standby_queue.pop() if standby_queue else None
+        standby_seen = time.time()
+        if item and time.time() - item[1] < 5:
+            return self.reply_json({"url": item[0]})
+        self.send_response(204)
+        self.end_headers()
 
     def reply_json(self, obj, status=200):
         self.reply(json.dumps(obj, ensure_ascii=False).encode(), "application/json", status)
@@ -315,6 +398,12 @@ class LocalServer(BaseHTTPRequestHandler):
         global last_done
         if self.path.split("?")[0] == "/api/settings":
             return self.save_settings()
+        if self.path.split("?")[0] == "/standby/ack":
+            standby_ack.set()
+            self.send_response(204)
+            return self.end_headers()
+        if self.path.split("?")[0] == "/api/test":
+            return self.run_test()
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             log(f"확장: {body.get('log')}")
@@ -332,6 +421,16 @@ class LocalServer(BaseHTTPRequestHandler):
             log(f"확장 로그 읽기 실패: {e!r}")
         self.send_response(204)
         self.end_headers()
+
+    def run_test(self):
+        """listener.py --test 가 부른다 (대기 창은 이 수신기 안에서만 넘길 수 있어서). 화담숲 자동 진행 주소만 연다"""
+        if self.headers.get("Origin") is not None or not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            return self.reply_json({"ok": False}, 403)
+        url = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}").get("url") or ""
+        if not url.startswith(watch.PRODUCT_URL + AUTO_MARK):
+            return self.reply_json({"ok": False}, 400)
+        threading.Thread(target=open_in_chrome, args=(url,), daemon=True).start()
+        self.reply_json({"ok": True})
 
     def save_settings(self):
         # 아무 웹페이지나 이 주소로 설정을 바꾸지 못하게, 이 화면에서 JSON 으로 보낸 요청만 받는다
@@ -399,6 +498,41 @@ def listen(topic):
             time.sleep(5)
 
 
+def standby_loop():
+    """대기 창을 하나 띄워 둔다 (10분마다 새로 읽는 건 확장이 함). 쓰였거나 닫혔으면 새로 띄운다.
+    크롬이 꺼져 있거나(띄우면 크롬이 켜져 버림) 크롬을 쓰는 중이거나(새 창이 하던 일을 가림) 방금 자동 진행에 썼으면 미룬다"""
+    busy_since, since = 0, time.time()  # since: 대기 창을 띄운(또는 이 수신기가 뜬) 시각
+    while True:
+        time.sleep(30)
+        try:
+            if subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True).returncode != 0:
+                continue
+            wid = read_standby()
+            state = standby_state(wid) if wid else "gone"
+            if state == "busy":
+                busy_since = busy_since or time.time()
+                if time.time() - busy_since < 5 * 60:
+                    continue  # 미리 로그인하러 간 중. 5분 넘게 안 돌아오면 닫고 새로 띄운다
+                chrome(f"close window id {wid}")
+            busy_since = 0
+            if state == "ready":
+                if time.time() - max(since, standby_seen) < 90:
+                    continue
+                # 확장을 새로 읽으면 그 전에 떠 있던 대기 창은 알림을 못 받는다 → 닫고 새로
+                log("대기 창이 알림을 기다리지 않아 새로 띄움")
+                chrome(f"close window id {wid}")
+            write_standby(None)
+            if time.time() - last_open < STANDBY_REARM or front_app() == "com.google.Chrome":
+                continue
+            wid = new_window(watch.PRODUCT_URL + STANDBY_HASH)
+            if wid:
+                write_standby(wid)
+                since = time.time()
+                log(f"대기 창 띄움 ({wid})")
+        except Exception as e:
+            log(f"대기 창 관리 실패: {e!r}")
+
+
 def poll_loop(topic):
     """맥 조회가 켜져 있으면 POLL_EVERY 초마다 직접 조회한다. 판정·알림은 GitHub 과 같은 watch.py 코드."""
     watch.SSL_CONTEXT = SSL_CTX
@@ -454,7 +588,13 @@ def poll_loop(topic):
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--test":
-        open_in_chrome(sys.argv[2])
+        # 떠 있는 수신기에 맡긴다 (대기 창을 쓰려면). 수신기가 없으면 여기서 새 창으로
+        req = urllib.request.Request(f"http://127.0.0.1:{LOG_PORT}/api/test", json.dumps({"url": sys.argv[2]}).encode(),
+                                     {"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+        except OSError:
+            open_in_chrome(sys.argv[2])
         return
     with open(TOPIC_FILE) as f:
         topic = f.read().strip()
@@ -462,6 +602,7 @@ def main():
     serve_local()
     threading.Thread(target=settings_loop, daemon=True).start()
     threading.Thread(target=poll_loop, args=(topic,), daemon=True).start()
+    threading.Thread(target=standby_loop, daemon=True).start()
     listen(topic)
 
 

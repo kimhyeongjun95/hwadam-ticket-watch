@@ -114,6 +114,29 @@ async function naverLogin(tab, msg) {
   await trustedClick(tab.id, msg.trustedClick);
 }
 
+// 대기 창(content.js)이 연결해 오면 수신기에 알림이 오길 기다렸다가(/standby/wait, 20초씩) 그 창에 넘기고 받았다고 알린다.
+// 서비스 워커는 확장 API 를 30초 동안 안 부르면 꺼지니 매번 하나 부른다
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "standby") return;
+  let alive = true;
+  port.onDisconnect.addListener(() => { alive = false; });
+  // 크롬이 메모리 아끼려고 오래 안 본 탭을 비우면 대기 창이 죽는다
+  if (port.sender?.tab) chrome.tabs.update(port.sender.tab.id, { autoDiscardable: false }).catch(() => {});
+  (async () => {
+    while (alive) {
+      await chrome.runtime.getPlatformInfo();
+      try {
+        const r = await fetch("http://127.0.0.1:8789/standby/wait");
+        if (r.status !== 200 || !alive) continue;
+        port.postMessage(await r.json());
+        fetch("http://127.0.0.1:8789/standby/ack", { method: "POST" }).catch(() => {});
+      } catch (_) {
+        await sleep(5000); // 수신기가 꺼져 있음
+      }
+    }
+  })();
+});
+
 chrome.runtime.onMessage.addListener((msg, sender) => {
   // 수신기는 창을 내려(최소화) 둔 채 진행시킨다. 주문서가 뜨면 그 창을 올리고 수신기가 크롬을 앞으로 띄운다
   if (msg?.done === "ok" && sender.tab) {
