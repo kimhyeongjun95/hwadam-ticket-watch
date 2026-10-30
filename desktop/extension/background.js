@@ -1,11 +1,23 @@
 // content.js 가 보낸 진행 상황을 맥 수신기(listener.py)의 로컬 로그 서버로 넘긴다.
 // 페이지에서 바로 localhost 로 보내면 브라우저 보안 정책에 막혀서 백그라운드를 거친다.
-function log(text) {
-  fetch("http://127.0.0.1:8789/log", {
+// done 이 있으면 끝났다는 뜻: "ok" 면 수신기가 크롬을 앞으로 띄우고, "fail" 이면 알림만 띄운다.
+// show 면 끝나진 않았지만 창이 보여야 해서 크롬을 앞으로 띄운다
+function log(text, done, show) {
+  return fetch("http://127.0.0.1:8789/log", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ log: text }),
+    body: JSON.stringify({ log: text, done, show }),
   }).catch(() => {}); // 수신기가 꺼져 있어도 진행은 계속
+}
+
+// 수신기가 내려(최소화) 둔 창은 한 번도 안 그려져서 네이버 로그인 클릭이 안 먹는다 (10/26·10/30).
+// 로그인 때만은 창을 올리고 크롬을 앞으로 띄운 뒤 그려질 때까지 잠깐 기다린다
+async function showForLogin(windowId) {
+  const w = await chrome.windows.get(windowId);
+  if (w.state !== "minimized") return;
+  await chrome.windows.update(windowId, { state: "normal", focused: true });
+  await log("네이버 로그인은 창이 보여야 눌려서 크롬을 앞으로 띄워요.", undefined, true);
+  await new Promise((r) => setTimeout(r, 1000));
 }
 
 // 크롬 디버거로 사람이 누른 것과 같은 클릭을 보낸다 (naver.js). 자동완성된 비밀번호는 사람의 입력이 있어야 페이지에 넘어간다.
@@ -51,8 +63,14 @@ async function trustedClick(tabId, selector) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.log) log(msg.log);
+  // 수신기는 창을 내려(최소화) 둔 채 진행시킨다. 주문서가 뜨면 그 창을 올리고 수신기가 크롬을 앞으로 띄운다
+  if (msg?.done === "ok" && sender.tab) {
+    chrome.windows.update(sender.tab.windowId, { state: "normal", focused: true })
+      .catch(() => {}).then(() => log(msg.log, "ok"));
+  } else if (msg?.log) log(msg.log, msg.done);
   if (msg?.trustedClick && sender.tab) {
-    trustedClick(sender.tab.id, msg.trustedClick).catch((e) => log(`클릭 실패: ${e.message}. 직접 진행해 주세요.`));
+    showForLogin(sender.tab.windowId).catch(() => {})
+      .then(() => trustedClick(sender.tab.id, msg.trustedClick))
+      .catch((e) => log(`클릭 실패: ${e.message}. 직접 진행해 주세요.`));
   }
 });

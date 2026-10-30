@@ -12,7 +12,8 @@
 
   const log = (text) => {
     console.log("[hwadam-auto]", text);
-    try { chrome.runtime.sendMessage({ log: text }); } catch (_) {}
+    // '직접 로그인' 해야 하면 자동 진행이 멈춘 것 → 맥 알림
+    try { chrome.runtime.sendMessage({ log: text, done: /직접 로그인/.test(text) ? "fail" : undefined }); } catch (_) {}
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const visible = (e) => !!(e && (e.offsetWidth || e.offsetHeight));

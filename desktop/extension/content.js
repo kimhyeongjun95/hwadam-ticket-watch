@@ -14,19 +14,20 @@
     "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
     "padding:10px 16px;border-radius:10px;background:#1f2937;color:#fff;font:600 14px/1.4 sans-serif;" +
     "box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw";
-  const say = (text, color) => {
+  // done: 끝났을 때만 "ok"(주문서 뜸 → 내려 둔 창을 올리고 크롬을 앞으로) 또는 "fail"(멈춤 → 맥 알림)
+  const say = (text, color, done) => {
     banner.textContent = `화담숲 자동 진행: ${text}`;
     if (color) banner.style.background = color;
     if (!banner.isConnected && document.body) document.body.appendChild(banner);
     console.log("[hwadam-auto]", text);
     // 맥 수신기 로그에도 남긴다 (background.js 가 localhost 로 전달)
-    try { chrome.runtime.sendMessage({ log: text }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ log: text, done }); } catch (_) {}
   };
   // 단계마다 페이지를 열기 시작한 뒤 몇 초째인지 적어 두고 끝날 때 로그에 붙인다 (어디가 느린지 보려고)
   const laps = [];
   const lap = (name) => laps.push(`${name} ${(performance.now() / 1000).toFixed(1)}`);
   const took = () => (laps.length ? ` [초: ${laps.join(" · ")}]` : "");
-  const stop = (text) => { say(text + took(), "#b91c1c"); throw new Error(text); };
+  const stop = (text) => { say(text + took(), "#b91c1c", "fail"); throw new Error(text); };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const visible = (e) => !!(e && (e.offsetWidth || e.offsetHeight));
@@ -228,7 +229,7 @@
     if (dry) {
       buy.style.outline = "4px solid #f59e0b";
       const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
-      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono || "모노레일 없음"}${took()}`, "#b45309");
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono || "모노레일 없음"}${took()}`, "#b45309", "ok");
     }
     lap("구매하기");
     say(`구매하기 누름 (${mono || "모노레일 없이 입장권만"}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
@@ -238,15 +239,25 @@
     let shown = new Set();
     try { shown = new Set(notices()); } catch (_) {} // 무슨 일이 있어도 구매하기는 누른다
     const here = location.href; // 같은 페이지 안에서 주문서 주소로 바뀌어도 넘어간 것
+    // 주문서로 넘어가면 이 페이지가 사라지니 그 직전(pagehide)에 알린다
+    const ordered = () => say(`주문서로 넘어감 (${mono || "모노레일 없이 입장권만"})`, null, "ok");
+    addEventListener("pagehide", ordered, { once: true });
     buy.click();
     for (const end = Date.now() + 15000; Date.now() < end; ) {
       await sleep(300);
-      if (location.href !== here) return;
+      if (location.href !== here) {
+        removeEventListener("pagehide", ordered);
+        return ordered();
+      }
       let notice = null;
       try { notice = notices().find((e) => !shown.has(e)); } catch (_) {}
-      if (notice) stop(`구매하기 뒤 주문서 대신 '${(notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60)}' 창이 떴어요.`);
+      if (notice) {
+        removeEventListener("pagehide", ordered);
+        stop(`구매하기 뒤 주문서 대신 '${(notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60)}' 창이 떴어요.`);
+      }
     }
-    say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c");
+    removeEventListener("pagehide", ordered);
+    say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c", "fail");
   }
 
   run().catch((e) => console.warn("[hwadam-auto]", e));

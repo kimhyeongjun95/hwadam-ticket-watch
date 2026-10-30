@@ -63,30 +63,58 @@ def log(msg):
     print(f"{datetime.now():%m/%d %H:%M:%S} {msg}", flush=True)
 
 
+def front_app():
+    """지금 맨 앞 앱의 번들 ID (자동화 권한 없이 읽힌다)"""
+    r = subprocess.run(["/bin/sh", "-c", "lsappinfo info -only bundleid $(lsappinfo front)"], capture_output=True, text=True)
+    return r.stdout.split("=")[-1].strip().strip('"')
+
+
 def open_in_chrome(url):
     # PC 폭에서는 '옵션 선택하기'가 창을 안 열고 스크롤만 해서, 휴대폰 폭(480px)의 새 창으로 연다.
     # 크롬에서 마지막으로 쓰던 프로필(= NOL 로그인된 프로필)로 열린다.
+    # 하던 일을 가리지 않게 창은 바로 내려(최소화) 두고 쓰던 앱을 다시 앞으로 돌린다.
+    # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다
+    before = front_app()
+    # Playwright 같은 자동화 도구가 띄운 크롬(--user-data-dir 로 따로 뜸)이 있으면 osascript 가 그쪽으로 가서
+    # 확장도 로그인도 없는 창이 열린다 (10/30). 고칠 길이 없어 알리기만 한다
+    other = subprocess.run(["pgrep", "-f", "Google Chrome.app/Contents/MacOS/Google Chrome .*--user-data-dir"],
+                           capture_output=True, text=True).stdout.split()
+    if other:
+        log(f"자동화용 크롬이 떠 있음 (pid {', '.join(other)}) — 엉뚱한 크롬에 열릴 수 있음")
+        notify_mac("자동화용 크롬이 떠 있어 평소 크롬이 아닌 곳에 열릴 수 있어요. 그 크롬을 닫아 주세요.", "Basso")
     script = f'''
 tell application "Google Chrome"
-  activate
   set w to make new window
   set bounds of w to {{60, 40, 540, 980}}
   set URL of active tab of w to "{url}"
+  set minimized of w to true
 end tell'''
     r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
     if r.returncode != 0:
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
         log(f"좁은 창 열기 실패, 일반 탭으로 엶: {r.stderr.strip()}")
         subprocess.run(["open", "-a", "Google Chrome", url], check=False)
-    subprocess.run(["osascript", "-e",
-                    'display notification "크롬에서 주문서를 띄우는 중이에요. 결제만 하세요." '
-                    'with title "화담숲 예약 가능" sound name "Glass"'], check=False)
+    elif before and before != "com.google.Chrome":
+        subprocess.run(["osascript", "-e", f'tell application id "{before}" to activate'], check=False)
+    notify_mac("예약 가능! 뒤에서 주문서를 띄우는 중이에요. 뜨면 크롬이 앞으로 나와요.", "Glass")
+    # 확장이 끝(주문서 뜸·멈춤)을 알려 오지 않은 채 1분이 지나면 숨은 창에서 막힌 것일 수 있으니 알린다
+    opened = time.time()
+    timer = threading.Timer(60, lambda: last_done < opened and notify_mac(
+        "1분이 지나도 주문서가 안 떴어요. Dock 의 크롬 창을 확인하세요.", "Basso"))
+    timer.daemon = True
+    timer.start()
+
+
+def show_chrome():
+    """확장이 내려 뒀던 창을 올렸다고 알려 오면 크롬을 맨 앞으로 (주문서가 떴거나 네이버 로그인을 눌러야 할 때)"""
+    subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'], check=False)
 
 
 opened_at = {}  # PC 자동 진행 주소 → 크롬으로 연 시각
 last_poll = ""  # 맥 조회 마지막 결과 (/poll 과 상태 화면에 보여 줌)
 last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막대에 띄움
 paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
+last_done = 0  # 확장이 자동 진행 끝(주문서 뜸·멈춤)을 마지막으로 알려 온 시각
 opened_lock = threading.Lock()
 settings_lock = threading.Lock()
 settings_sync = {"at": "", "error": ""}  # GitHub 변수와 마지막으로 맞춘 시각, 실패 이유
@@ -106,8 +134,10 @@ def note_alert(title):
     last_alert = (time.time(), f"{datetime.now():%m/%d %H:%M} {title}")
 
 
-def notify_mac(text):
-    subprocess.run(["osascript", "-e", f'display notification "{text}" with title "화담숲 감시"'], check=False)
+def notify_mac(text, sound=None):
+    text = text.replace("\\", "\\\\").replace('"', '\\"')  # 확장이 보낸 글도 들어온다
+    sound = f' sound name "{sound}"' if sound else ""
+    subprocess.run(["osascript", "-e", f'display notification "{text}" with title "화담숲 감시"{sound}'], check=False)
 
 
 def poll_on():
@@ -282,11 +312,22 @@ class LocalServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        global last_done
         if self.path.split("?")[0] == "/api/settings":
             return self.save_settings()
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             log(f"확장: {body.get('log')}")
+            # 확장이 끝을 알려 온다: 주문서가 떴으면 크롬을 앞으로, 멈췄으면 알림만 (창은 Dock 에 내려가 있음)
+            if body.get("done"):
+                last_done = time.time()
+            if body.get("done") == "ok":
+                show_chrome()
+                notify_mac(f"주문서가 떴어요. 결제하세요. {body.get('log')}", "Glass")
+            elif body.get("show"):
+                show_chrome()
+            elif body.get("done") == "fail":
+                notify_mac(f"자동 진행이 멈췄어요. Dock 의 크롬 창에서 직접 진행하세요. {body.get('log')}", "Basso")
         except Exception as e:
             log(f"확장 로그 읽기 실패: {e!r}")
         self.send_response(204)
