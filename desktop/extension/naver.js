@@ -1,7 +1,7 @@
 // 화담숲 자동 진행 중 '네이버로 시작하기'(login.js)를 눌렀는데 네이버 로그인 화면이 뜨면,
 // 크롬이 비밀번호를 자동완성해 둔 경우에만 '로그인'을 눌러 준다. 비밀번호는 읽지도 넣지도 않는다.
 // 자동완성된 비밀번호는 사람이 화면을 건드리기 전까지 페이지에 빈 값으로 보여서 click() 으로는 빈 비밀번호가 간다.
-// 그래서 background.js 가 크롬 디버거로 사람이 누른 것과 같은 클릭을 보낸다 (그동안 '디버깅 중' 안내 줄이 잠깐 뜬다).
+// 그래서 background.js 가 크롬 디버거로 사람이 누른 것과 같은 입력을 보낸다 (그동안 '디버깅 중' 안내 줄이 잠깐 뜬다).
 (async () => {
   const pw = document.getElementById("pw");
   if (!pw) return; // 로그인 화면이 아님
@@ -32,5 +32,6 @@
   if (!btn) return log("네이버 '로그인' 버튼을 못 찾았어요. 직접 로그인해 주세요.");
   btn.setAttribute("data-hwadam-click", "");
   log("네이버 로그인 화면에서 자동완성된 계정으로 '로그인' 누르는 중…");
-  chrome.runtime.sendMessage({ trustedClick: "[data-hwadam-click]" });
+  // 먼저 비밀번호 칸에서 키보드로 Enter, 안 되면 '로그인' 버튼을 마우스로 (background.js)
+  chrome.runtime.sendMessage({ trustedEnter: "#pw", trustedClick: "[data-hwadam-click]" });
 })();
