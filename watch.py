@@ -37,7 +37,7 @@ MONORAIL_APIS = {  # 파는 곳: (옵션 그룹 주소, 2구간 옵션 번호)
     "입장권과 같이": ("https://leisure-web-api.yanolja.com/product/v1/products/10367229/option-groups/10480708", 14253600),
     "추가상품": ("https://leisure-web-api.yanolja.com/product/v1/products/10367231/option-groups/10480710", 14253640),
 }
-MONORAIL_EARLIEST, MONORAIL_LATEST = "09:00", "09:15"
+MONORAIL_EARLIEST, MONORAIL_LATEST = "09:20", "12:00"
 # 사이트 JS 에 들어 있는 웹 공용 토큰. 계정과 무관하고 모든 브라우저가 같은 값을 보낸다.
 API_HEADERS = {
     # Cloudflare 가 파이썬 기본 User-Agent 는 403 으로 막는다.
