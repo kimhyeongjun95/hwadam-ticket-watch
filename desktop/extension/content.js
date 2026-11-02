@@ -174,6 +174,7 @@
     };
     connect();
     setTimeout(() => { if (!used) location.reload(); }, 10 * 60e3);
+    say(`대기 중 (폭 ${innerWidth}px)`);
     const { pending } = await chrome.storage.local.get("pending");
     const loginTried = pending?.spec === STANDBY && Date.now() - pending.at < 3 * 60e3;
     if (pending?.spec === STANDBY) await chrome.storage.local.remove("pending");

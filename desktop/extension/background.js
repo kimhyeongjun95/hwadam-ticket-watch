@@ -123,12 +123,15 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => { alive = false; });
   // 크롬이 메모리 아끼려고 오래 안 본 탭을 비우면 대기 창이 죽는다
   if (port.sender?.tab) chrome.tabs.update(port.sender.tab.id, { autoDiscardable: false }).catch(() => {});
+  // 지금 대기 중인 창을 기억해 둔다 (새로 띄울 때 옛 창을 닫으려고). 품절로 멈춰 새로 읽은 창도 여기서 다시 대기 창이 된다
+  if (port.sender?.tab) chrome.storage.local.set({ standbyWindow: port.sender.tab.windowId });
   (async () => {
     while (alive) {
       await chrome.runtime.getPlatformInfo();
       try {
         const r = await fetch("http://127.0.0.1:8789/standby/wait");
         if (r.status !== 200 || !alive) continue;
+        chrome.storage.local.remove("standbyWindow"); // 이제 주문하러 가는 창이다
         port.postMessage(await r.json());
         fetch("http://127.0.0.1:8789/standby/ack", { method: "POST" }).catch(() => {});
       } catch (_) {
@@ -156,3 +159,37 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     naverLogin(sender.tab, msg).catch((e) => log(`클릭 실패: ${e.message}. 직접 진행해 주세요.`));
   }
 });
+
+// 대기 창은 여기서 띄운다. 수신기가 AppleScript 로 띄우면 창이 화면에 떴다가 Dock 으로 내려가고 앱이 바뀌어서 (11/2),
+// 크롬 API 로 처음부터 내린(최소화) 채, 앞으로 나오지 않게 연다. 30초마다 수신기에 띄워야 하는지 묻는다
+const PRODUCT = "https://leisure-web.yanolja.com/leisure/10367229";
+async function checkStandby() {
+  let need;
+  try {
+    const r = await fetch("http://127.0.0.1:8789/standby/need");
+    if (r.status !== 200) return;
+    need = await r.json();
+  } catch (_) {
+    return; // 수신기가 꺼져 있음
+  }
+  if (need.reload) return chrome.runtime.reload(); // 확장 파일을 고쳤을 때 수신기가 새로 읽힌다 (listener.py --reload-extension)
+  try {
+    const { standbyWindow } = await chrome.storage.local.get("standbyWindow");
+    const old = standbyWindow && (await chrome.windows.get(standbyWindow, { populate: true }).catch(() => null));
+    if (old && old.state !== "minimized") return log("대기 창을 사람이 보고 있어서 새로 띄우지 않아요."); // 그대로 둔다
+    // 알림을 못 받게 된 옛 대기 창 (확장을 새로 읽었거나 로그인하다 막힘) 은 닫는다
+    if (old && old.tabs.length === 1) await chrome.windows.remove(old.id).catch(() => {});
+    // 옵션 창이 휴대폰 폭에서만 열려서 폭을 정해 뒤에(focused: false — 앞 앱이 안 바뀜) 연 뒤 바로 내린다.
+    // 처음부터 내린 채 만들면 폭을 못 정하고, 내린 창 크기를 바꾸면 다시 올라온다 (11/2)
+    const w = await chrome.windows.create({ url: need.url, focused: false, left: 60, top: 40, width: 480, height: 940 });
+    await chrome.windows.update(w.id, { state: "minimized" });
+    await chrome.storage.local.set({ standbyWindow: w.id });
+    const after = await chrome.windows.get(w.id).catch(() => null);
+    log(`대기 창 띄움 (${after?.state} ${after?.width}x${after?.height})`);
+  } catch (e) {
+    log(`대기 창 띄우기 실패: ${e.message}`);
+  }
+}
+chrome.alarms.create("standby", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === "standby") checkStandby(); });
+checkStandby(); // 확장이 (새로) 뜰 때도 바로 한 번

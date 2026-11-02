@@ -39,9 +39,9 @@ try:
 except (OSError, ValueError):
     POLL_EVERY = 20  # 초
 REOPEN_AFTER = 10 * 60  # 같은 회차는 이 시간(초) 안에 다시 알려도 크롬을 또 열지 않는다
-# 알림이 오면 바로 고르도록 상품 페이지를 미리 띄워 Dock 에 내려 둔 창 (대기 창). 창 번호를 적어 둔다 (git 에 안 올림)
-STANDBY_FILE = os.path.join(ROOT, ".standby-window")
+# 알림이 오면 바로 고르도록 상품 페이지를 미리 띄워 Dock 에 내려 둔 창 (대기 창). 확장이 띄우고 관리한다
 STANDBY_HASH = "#hwadam-standby"
+RELOAD_FLAG = os.path.join(ROOT, ".reload-extension")  # 있으면 확장이 30초 안에 스스로 새로 읽는다 (listener.py --reload-extension)
 STANDBY_REARM = 2 * 60  # 초. 대기 창을 쓰고 나서 이만큼 뒤에 새로 띄운다 (그 창에서 결제 중일 수 있어서)
 LOG_FILE = os.path.expanduser("~/Library/Logs/hwadam-listener.log")  # install.sh 가 launchd 출력을 여기로 보낸다
 DASHBOARD = os.path.join(HERE, "dashboard.html")  # http://127.0.0.1:8789/ 상태·로그 화면
@@ -95,34 +95,6 @@ def new_window(url):
     return wid
 
 
-def read_standby():
-    try:
-        with open(STANDBY_FILE) as f:
-            return int(f.read())
-    except (OSError, ValueError):
-        return None
-
-
-def write_standby(wid):
-    if wid:
-        with open(STANDBY_FILE, "w") as f:
-            f.write(str(wid))
-    elif os.path.exists(STANDBY_FILE):
-        os.remove(STANDBY_FILE)
-
-
-def standby_state(wid):
-    """대기 창 상태: "ready"(상품 페이지에서 내려가 있음), "busy"(내려간 채 로그인하러 감), "shown"(사람이 올려 봄), "gone"(닫힘)"""
-    out = chrome(f'''if not (exists window id {wid}) then return "gone"
-  set w to window id {wid}
-  return (minimized of w as text) & " " & (URL of active tab of w)''')
-    if out and out.startswith("false "):
-        return "shown"
-    if not out or not out.startswith("true "):
-        return "gone"
-    return "ready" if out[5:].startswith(watch.PRODUCT_URL) else "busy"
-
-
 # 대기 창에 알림 넘기기. AppleScript 로 주소를 바꾸면 내려 둔 창이 올라와 버려서 (10/30) 확장을 거친다:
 # 대기 창의 확장(background.js)이 /standby/wait 로 계속 기다리고 있다가 받으면 바로 고르고 /standby/ack 로 받았다고 알린다
 standby_cond = threading.Condition()
@@ -149,7 +121,7 @@ def hand_to_standby(url):
 def open_in_chrome(url):
     # 대기 창이 있으면 이미 떠 있는 페이지에서 바로 고르게 한다. 없거나 반응이 없으면 새 창으로.
     # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다. 알림은 결과가 나온 뒤에만 (품절이면 조용히 끝)
-    global last_open, used_standby
+    global last_open
     last_open = time.time()
     # Playwright 같은 자동화 도구가 띄운 크롬(--user-data-dir 로 따로 뜸)이 있으면 osascript 가 그쪽으로 가서
     # 확장도 로그인도 없는 창이 열린다 (10/30). 고칠 길이 없어 알리기만 한다
@@ -159,9 +131,6 @@ def open_in_chrome(url):
         log(f"자동화용 크롬이 떠 있음 (pid {', '.join(other)}) — 엉뚱한 크롬에 열릴 수 있음")
         notify_mac("자동화용 크롬이 떠 있어 평소 크롬이 아닌 곳에 열릴 수 있어요. 그 크롬을 닫아 주세요.", "Basso")
     if hand_to_standby(url):
-        # 주문서까지 가면 그 창에서 결제하니 대기 창에서 뺀다. 품절로 멈추면 확장이 알려 와서 되돌린다
-        used_standby = read_standby()
-        write_standby(None)
         log("대기 창에서 바로 진행")
     elif not new_window(url):
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
@@ -186,7 +155,8 @@ last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막
 paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
 last_done = 0  # 확장이 자동 진행 끝(주문서 뜸·멈춤)을 마지막으로 알려 온 시각
 last_open = 0  # 마지막으로 자동 진행 창을 연 시각
-used_standby = None  # 자동 진행에 넘긴 대기 창 번호
+last_standby_ask = 0  # 확장에 대기 창을 띄우라고 마지막으로 한 시각
+started_at = time.time()
 opened_lock = threading.Lock()
 settings_lock = threading.Lock()
 settings_sync = {"at": "", "error": ""}  # GitHub 변수와 마지막으로 맞춘 시각, 실패 이유
@@ -380,6 +350,16 @@ class LocalServer(BaseHTTPRequestHandler):
             self.reply_json(settings_view())
         elif path == "/standby/wait":
             self.standby_wait()
+        elif path == "/standby/need":
+            if os.path.exists(RELOAD_FLAG):
+                os.remove(RELOAD_FLAG)
+                log("확장 새로 읽기")
+                self.reply_json({"reload": True})
+            elif need_standby():
+                self.reply_json({"url": watch.PRODUCT_URL + STANDBY_HASH})
+            else:
+                self.send_response(204)
+                self.end_headers()
         else:
             self.send_error(404)
 
@@ -408,7 +388,7 @@ class LocalServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        global last_done, last_open, last_alert, used_standby
+        global last_done, last_open, last_alert
         if self.path.split("?")[0] == "/api/settings":
             return self.save_settings()
         if self.path.split("?")[0] == "/standby/ack":
@@ -436,11 +416,8 @@ class LocalServer(BaseHTTPRequestHandler):
             elif body.get("show"):
                 show_chrome()
             elif done == "soldout":
-                last_open = 0  # 그 창에서 결제할 일이 없으니 대기 창을 바로 다시 띄운다
+                last_open = 0  # 그 창에서 결제할 일이 없다 (대기 창이었으면 새로 읽고 다시 기다린다)
                 last_alert = (0, f"{last_alert[1]} → 못 삼")  # 메뉴 막대의 빨간 '예약 가능!'도 내린다
-                if body.get("standby") and used_standby:
-                    write_standby(used_standby)  # 그 창이 새로 읽고 다시 기다린다 (새 창을 안 띄움)
-                    used_standby = None
             elif done == "fail":
                 notify_mac(f"자동 진행이 멈췄어요. Dock 의 크롬 창에서 직접 진행하세요. {body.get('log')}", "Basso")
                 if time.time() - last_open < 5 * 60:
@@ -528,41 +505,16 @@ def listen(topic):
             time.sleep(5)
 
 
-def standby_loop():
-    """대기 창을 하나 띄워 둔다 (10분마다 새로 읽는 건 확장이 함). 쓰였거나 닫혔으면 새로 띄운다.
-    크롬이 꺼져 있거나(띄우면 크롬이 켜져 버림) 크롬을 쓰는 중이거나(새 창이 하던 일을 가림) 방금 자동 진행에 썼으면 미룬다"""
-    busy_since, since = 0, time.time()  # since: 대기 창을 띄운(또는 이 수신기가 뜬) 시각
-    while True:
-        time.sleep(30)
-        try:
-            if subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True).returncode != 0:
-                continue
-            wid = read_standby()
-            state = standby_state(wid) if wid else "gone"
-            if state == "shown":
-                continue  # 사람이 올려 보는 중. 그 창도 알림은 받으니 새 창을 또 띄우지 않는다 (닫으면 그때 새로)
-            if state == "busy":
-                busy_since = busy_since or time.time()
-                if time.time() - busy_since < 5 * 60:
-                    continue  # 미리 로그인하러 간 중. 5분 넘게 안 돌아오면 닫고 새로 띄운다
-                chrome(f"close window id {wid}")
-            busy_since = 0
-            if state == "ready":
-                if time.time() - max(since, standby_seen) < 90:
-                    continue
-                # 확장을 새로 읽으면 그 전에 떠 있던 대기 창은 알림을 못 받는다 → 닫고 새로
-                log("대기 창이 알림을 기다리지 않아 새로 띄움")
-                chrome(f"close window id {wid}")
-            write_standby(None)
-            if time.time() - last_open < STANDBY_REARM or front_app() == "com.google.Chrome":
-                continue
-            wid = new_window(watch.PRODUCT_URL + STANDBY_HASH)
-            if wid:
-                write_standby(wid)
-                since = time.time()
-                log(f"대기 창 띄움 ({wid})")
-        except Exception as e:
-            log(f"대기 창 관리 실패: {e!r}")
+def need_standby():
+    """확장(background.js)이 30초마다 묻는다: 대기 창을 새로 띄워야 하나.
+    대기 창이 알림을 1분 반째 안 기다리고 있으면(없거나 닫혔거나 확장을 새로 읽음) 띄운다.
+    방금 자동 진행에 썼으면(그 창에서 결제 중일 수 있음) 2분, 방금 띄우라고 했으면(로그인하러 갔을 수 있음) 5분은 기다린다"""
+    global last_standby_ask
+    now = time.time()
+    if now - max(standby_seen, started_at) < 90 or now - last_open < STANDBY_REARM or now - last_standby_ask < 5 * 60:
+        return False
+    last_standby_ask = now
+    return True
 
 
 def poll_loop():
@@ -620,6 +572,9 @@ def poll_loop():
 
 
 def main():
+    if sys.argv[1:] == ["--reload-extension"]:
+        open(RELOAD_FLAG, "w").close()  # 확장 파일을 고친 뒤 chrome://extensions 에서 누르지 않아도 되게
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--test":
         # 떠 있는 수신기에 맡긴다 (대기 창을 쓰려면). 수신기가 없으면 여기서 새 창으로
         req = urllib.request.Request(f"http://127.0.0.1:{LOG_PORT}/api/test", json.dumps({"url": sys.argv[2]}).encode(),
@@ -637,7 +592,6 @@ def main():
     serve_local()
     threading.Thread(target=settings_loop, daemon=True).start()
     threading.Thread(target=poll_loop, daemon=True).start()
-    threading.Thread(target=standby_loop, daemon=True).start()
     listen(topic)
 
 

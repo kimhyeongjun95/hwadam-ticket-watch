@@ -6,3 +6,4 @@ logs/
 .settings.json
 .poll-every
 .standby-window
+.reload-extension
