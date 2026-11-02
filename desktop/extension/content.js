@@ -83,18 +83,11 @@
 
   // 입장권을 고른 뒤 같은 주문에 모노레일을 더한다. 모노레일만 따로는 못 사고, 입장 20분 뒤 회차부터, 입장권 매수까지만 고를 수 있다.
   // '모노레일 선택' → (화담채를 안 골라서 뜨는 확인 창의) '모노레일로 이동' → 구간 → qty 장 남은 가장 이른 회차 → 성인 → 매수.
-  // 고르면 설명을, 못 고르면 '이전'으로 입장권 단계에 돌아가 null 을 돌려준다 (그러면 입장권만 사고 모노레일은 나중에 추가상품으로).
+  // 고르면 설명을 돌려주고, 못 고르면 구매하기를 누르지 않고 멈춘다 (모노레일 없이 입장권만은 사지 않음 — 11/2)
   const MONO_SEGMENT = "2구간(1-3)";
   async function addMonorail(qty) {
     const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0];
-    const back = async (why) => {
-      say(`${why} 모노레일 없이 입장권만 구매하기로 가요.`);
-      // 반쯤 고른 모노레일이 주문에 딸려 가지 않게 지우고 돌아간다
-      buttons('button[aria-label$="옵션 삭제"]').forEach((e) => e.click());
-      byText("이전")?.click();
-      await until(() => byText("모노레일 선택"), 3000);
-      return null;
-    };
+    const back = (why) => stop(`${why} 모노레일 없이는 사지 않아서 구매하기를 누르지 않았어요.`);
     const next = byText("모노레일 선택");
     if (!next) return back("'모노레일 선택' 버튼이 없어요.");
     next.click();
@@ -106,13 +99,13 @@
     lap("모노레일 구간");
 
     // 회차 — 입장권과 같은 모양 <button role="option" aria-label="09:00 선택">09:002매</button>, 품절이면 '마감'.
-    // 지나간 입장권 회차 버튼도 숨은 채 남아 있어서 보이는 것만 본다. 회차가 뜨면 0.3초만 더 보고 없으면 바로 입장권만 산다
-    // (예전엔 재고를 늦게 받아올까 봐 2초 기다렸는데, 모노레일이 없을 때마다 2초씩 늦어져 표를 놓쳤다 — 10/30)
+    // 지나간 입장권 회차 버튼도 숨은 채 남아 있어서 보이는 것만 본다. 막 그려진 회차는 재고를 받아오기 전일 수 있어 2초까지 기다린다
+    // (모노레일이 없으면 어차피 안 사니, 재고가 늦게 떠서 놓치지 않게 넉넉히 본다)
     const slots = () => buttons('button[role="option"]').filter((e) => /^\d{2}:\d{2} 선택$/.test(e.getAttribute("aria-label") || ""));
     // 글자가 '17:081매' 처럼 붙어 있어서 앞의 시각(5글자)을 떼고 읽는다
     const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
     await until(() => slots().length || null, 5000);
-    const slot = await until(() => slots().find((e) => left(e) >= qty), 300);
+    const slot = await until(() => slots().find((e) => left(e) >= qty), 2000);
     if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`);
     const time = slot.getAttribute("aria-label").slice(0, 5);
     slot.click();
@@ -261,7 +254,7 @@
       stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${entryInput.value}장). 남은 표가 모자랄 수 있어요.`);
     }
 
-    // 7. 모노레일. 못 고르면 입장권만 산다
+    // 7. 모노레일. 못 고르면 여기서 멈춘다
     const mono = await addMonorail(qty);
 
     // 8. 구매하기 — 지금 보이는 단계(모노레일 또는 입장권)의 매수 입력칸과 같은 창 안의 버튼
@@ -275,10 +268,10 @@
     if (dry) {
       buy.style.outline = "4px solid #f59e0b";
       const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
-      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono || "모노레일 없음"}${took()}`, "#b45309", "ok");
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono}${took()}`, "#b45309", "ok");
     }
     lap("구매하기");
-    say(`구매하기 누름 (${mono || "모노레일 없이 입장권만"}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
+    say(`구매하기 누름 (${mono}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
     // 주문서로 넘어가면 이 페이지가 사라진다. 그대로 남아 창이 뜨면 ('선택한 상품이 매진되었어요' 등) 무엇인지 남긴다
     const notices = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((e) => visible(e) && text(e))
       .concat([...document.querySelectorAll("body *")].filter((e) => !e.children.length && /매진|품절|초기화|다시 선택/.test(e.textContent) && visible(e)));
@@ -286,7 +279,7 @@
     try { shown = new Set(notices()); } catch (_) {} // 무슨 일이 있어도 구매하기는 누른다
     const here = location.href; // 같은 페이지 안에서 주문서 주소로 바뀌어도 넘어간 것
     // 주문서로 넘어가면 이 페이지가 사라지니 그 직전(pagehide)에 알린다
-    const ordered = () => say(`주문서로 넘어감 (${mono || "모노레일 없이 입장권만"})`, null, "ok");
+    const ordered = () => say(`주문서로 넘어감 (${mono})`, null, "ok");
     addEventListener("pagehide", ordered, { once: true });
     buy.click();
     for (const end = Date.now() + 15000; Date.now() < end; ) {
