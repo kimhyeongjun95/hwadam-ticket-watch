@@ -95,7 +95,10 @@
   // '모노레일 선택' → (화담채를 안 골라서 뜨는 확인 창의) '모노레일로 이동' → 구간 → qty 장 남은 가장 이른 회차 → 성인 → 매수.
   // 고르면 설명을 돌려주고, 못 고르면 구매하기를 누르지 않고 멈춘다 (모노레일 없이 입장권만은 사지 않음 — 11/2)
   const MONO_SEGMENT = "2구간(1-3)";
-  async function addMonorail(qty) {
+  // 모노레일 회차는 입장 회차 20분 뒤부터 1시간 뒤까지만 고른다 (11/2)
+  const MONO_AFTER = [20, 60];
+  const minutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+  async function addMonorail(qty, entryTime) {
     const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0];
     const back = (why, done) => stop(`${why} 모노레일 없이는 사지 않아서 구매하기를 누르지 않았어요.`, done);
     const next = byText("모노레일 선택");
@@ -115,8 +118,14 @@
     // 글자가 '17:081매' 처럼 붙어 있어서 앞의 시각(5글자)을 떼고 읽는다
     const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
     await until(() => slots().length || null, 5000);
-    const slot = await until(() => slots().find((e) => left(e) >= qty), 2000);
-    if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`, "soldout");
+    const gap = (e) => minutes(e.getAttribute("aria-label")) - minutes(entryTime);
+    const inRange = (e) => gap(e) >= MONO_AFTER[0] && gap(e) <= MONO_AFTER[1];
+    const slot = await until(() => slots().find((e) => inRange(e) && left(e) >= qty), 2000);
+    if (!slot) {
+      // 그 범위에 무엇이 보였는지 남긴다 (정말 없었는지 못 읽었는지 가리려고)
+      const seen = slots().filter(inRange).map((e) => `${e.getAttribute("aria-label").slice(0, 5)} ${left(e)}장`).join(", ") || "없음";
+      return back(`${MONO_SEGMENT} 모노레일에 입장 ${MONO_AFTER[0]}분~${MONO_AFTER[1]}분 뒤 ${qty}장 남은 회차가 없어요 (그 범위: ${seen}).`, "soldout");
+    }
     const time = slot.getAttribute("aria-label").slice(0, 5);
     slot.click();
     lap("모노레일 회차");
@@ -266,7 +275,7 @@
     }
 
     // 7. 모노레일. 못 고르면 여기서 멈춘다
-    const mono = await addMonorail(qty);
+    const mono = await addMonorail(qty, time);
 
     // 8. 구매하기 — 지금 보이는 단계(모노레일 또는 입장권)의 매수 입력칸과 같은 창 안의 버튼
     const input = buttons('input[aria-label="숫자 입력"]')[0] || entryInput;
