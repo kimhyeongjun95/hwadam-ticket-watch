@@ -146,7 +146,7 @@ def hand_to_standby(url):
 
 def open_in_chrome(url):
     # 대기 창이 있으면 이미 떠 있는 페이지에서 바로 고르게 한다. 없거나 반응이 없으면 새 창으로.
-    # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다
+    # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다. 알림은 결과가 나온 뒤에만 (품절이면 조용히 끝)
     global last_open
     last_open = time.time()
     # Playwright 같은 자동화 도구가 띄운 크롬(--user-data-dir 로 따로 뜸)이 있으면 osascript 가 그쪽으로 가서
@@ -163,7 +163,6 @@ def open_in_chrome(url):
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
         log("좁은 창 열기 실패, 일반 탭으로 엶")
         subprocess.run(["open", "-a", "Google Chrome", url], check=False)
-    notify_mac("예약 가능! 뒤에서 주문서를 띄우는 중이에요. 뜨면 크롬이 앞으로 나와요.", "Glass")
     # 확장이 끝(주문서 뜸·멈춤)을 알려 오지 않은 채 1분이 지나면 숨은 창에서 막힌 것일 수 있으니 알린다
     opened = time.time()
     timer = threading.Timer(60, lambda: last_done < opened and notify_mac(
@@ -206,6 +205,15 @@ def notify_mac(text, sound=None):
     text = text.replace("\\", "\\\\").replace('"', '\\"')  # 확장이 보낸 글도 들어온다
     sound = f' sound name "{sound}"' if sound else ""
     subprocess.run(["osascript", "-e", f'display notification "{text}" with title "화담숲 감시"{sound}'], check=False)
+
+
+def notify_phone(title, message, click=None):
+    """폰(ntfy)으로 알린다. 'PC 자동 진행' 주소를 안 붙여서 이 수신기가 다시 받아도 크롬을 열지 않는다"""
+    try:
+        watch.http("https://ntfy.sh/", {"topic": os.environ["NTFY_TOPIC"], "title": title, "message": message,
+                                        "priority": 5, "tags": ["maple_leaf"], **({"click": click} if click else {})})
+    except Exception as e:
+        log(f"폰 알림 실패 {watch.describe(e)}")
 
 
 def poll_on():
@@ -395,7 +403,7 @@ class LocalServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        global last_done
+        global last_done, last_open, last_alert
         if self.path.split("?")[0] == "/api/settings":
             return self.save_settings()
         if self.path.split("?")[0] == "/standby/ack":
@@ -407,16 +415,30 @@ class LocalServer(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             log(f"확장: {body.get('log')}")
-            # 확장이 끝을 알려 온다: 주문서가 떴으면 크롬을 앞으로, 멈췄으면 알림만 (창은 Dock 에 내려가 있음)
-            if body.get("done"):
+            # 확장이 끝을 알려 온다. 알림은 주문서가 떴을 때와 사람이 봐야 할 때만 (11/2):
+            #   ok: 주문서가 뜸 → 크롬을 앞으로 + 맥·폰 알림. dry: 시험 모드 끝 → 크롬을 앞으로 + 맥 알림
+            #   soldout: 품절·매수 모자람·모노레일 없음 → 알리지 않는다 (창은 확장이 닫음)
+            #   fail: 화면을 못 찾았거나 로그인이 풀리는 등 → 맥 알림 (창은 Dock 에 둠), 자동 진행 중이었으면 폰에도
+            done = body.get("done")
+            if done:
                 last_done = time.time()
-            if body.get("done") == "ok":
+            if done in ("ok", "dry"):
                 show_chrome()
-                notify_mac(f"주문서가 떴어요. 결제하세요. {body.get('log')}", "Glass")
+                notify_mac(f"주문서가 떴어요. 결제하세요. {body.get('log')}" if done == "ok" else body.get("log") or "", "Glass")
+                if done == "ok":
+                    threading.Thread(target=notify_phone, daemon=True, args=(
+                        "화담숲 주문서가 떴어요! 맥에서 결제하세요", body.get("log") or "")).start()
             elif body.get("show"):
                 show_chrome()
-            elif body.get("done") == "fail":
+            elif done == "soldout":
+                last_open = 0  # 그 창에서 결제할 일이 없으니 대기 창을 바로 다시 띄운다
+                last_alert = (0, f"{last_alert[1]} → 못 삼")  # 메뉴 막대의 빨간 '예약 가능!'도 내린다
+            elif done == "fail":
                 notify_mac(f"자동 진행이 멈췄어요. Dock 의 크롬 창에서 직접 진행하세요. {body.get('log')}", "Basso")
+                if time.time() - last_open < 5 * 60:
+                    threading.Thread(target=notify_phone, daemon=True, args=(
+                        "화담숲 자동 진행이 멈췄어요", f"{body.get('log')}\n표가 남았을 수 있어요. 누르면 NOL 앱 상품 페이지가 열려요.",
+                        watch.APP_PRODUCT_URL)).start()
         except Exception as e:
             log(f"확장 로그 읽기 실패: {e!r}")
         self.send_response(204)
@@ -533,10 +555,8 @@ def standby_loop():
             log(f"대기 창 관리 실패: {e!r}")
 
 
-def poll_loop(topic):
+def poll_loop():
     """맥 조회가 켜져 있으면 POLL_EVERY 초마다 직접 조회한다. 판정·알림은 GitHub 과 같은 watch.py 코드."""
-    watch.SSL_CONTEXT = SSL_CTX
-    os.environ["NTFY_TOPIC"] = topic
     global last_poll, paused_until
     prev, prev_open, cells, was_on = {}, {}, {}, None
     while True:
@@ -563,14 +583,17 @@ def poll_loop(topic):
                     note_alert(title)
                     if url and not claim(url):
                         log(f"맥 조회: {title} — 방금 크롬으로 연 회차라 알림 생략")
+                    elif url:
+                        # 바로 사러 간다. 폰에는 결과만 알린다 (주문서가 떴거나 사람이 봐야 할 때. 품절로 못 사면 조용히 — 11/2)
+                        log(f"맥 조회: {title} → {url.split(AUTO_MARK)[1]} 사러 감")
+                        open_in_chrome(url)
                     else:
+                        # 회차 조회가 실패해 고를 회차를 모를 때만 폰으로 알린다 (맥이 대신 사 줄 수 없어서)
                         log(f"맥 조회: {title}")
                         try:
-                            watch.notify(title, message + f"\n(맥 {POLL_EVERY}초 조회에서 찾음)", 5, pc_url=url)
-                        except Exception as e:  # 폰 알림이 실패해도 크롬은 띄운다
+                            watch.notify(title, message + f"\n(맥 {POLL_EVERY}초 조회에서 찾음)", 5)
+                        except Exception as e:
                             log(f"맥 조회: 폰 알림 실패 {watch.describe(e)}")
-                        if url:
-                            open_in_chrome(url)
                 prev, prev_open = {d: cur[d]["status"] for d in dates}, cur_open
         except Exception as e:
             reason = watch.describe(e)
@@ -598,10 +621,12 @@ def main():
         return
     with open(TOPIC_FILE) as f:
         topic = f.read().strip()
+    watch.SSL_CONTEXT = SSL_CTX
+    os.environ["NTFY_TOPIC"] = topic  # watch.notify·notify_phone 이 쓴다
     load_settings()
     serve_local()
     threading.Thread(target=settings_loop, daemon=True).start()
-    threading.Thread(target=poll_loop, args=(topic,), daemon=True).start()
+    threading.Thread(target=poll_loop, daemon=True).start()
     threading.Thread(target=standby_loop, daemon=True).start()
     listen(topic)
 

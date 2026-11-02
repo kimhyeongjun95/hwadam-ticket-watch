@@ -20,7 +20,8 @@
     "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
     "padding:10px 16px;border-radius:10px;background:#1f2937;color:#fff;font:600 14px/1.4 sans-serif;" +
     "box-shadow:0 4px 16px rgba(0,0,0,.3);max-width:90vw";
-  // done: 끝났을 때만 "ok"(주문서 뜸 → 내려 둔 창을 올리고 크롬을 앞으로) 또는 "fail"(멈춤 → 맥 알림)
+  // done: 끝났을 때만. "ok"(주문서 뜸 → 내려 둔 창을 올리고 크롬을 앞으로, 맥·폰 알림), "dry"(시험 모드라 구매하기 직전에 멈춤 → 창을 올림),
+  // "soldout"(품절·매수 모자람·모노레일 없음처럼 살 게 없어서 멈춤 → 알리지 않고 창을 닫음), "fail"(화면을 못 찾는 등 사람이 봐야 함 → 알림)
   const say = (text, color, done) => {
     banner.textContent = `화담숲 자동 진행: ${text}`;
     if (color) banner.style.background = color;
@@ -35,7 +36,7 @@
   let t0 = 0;
   const lap = (name) => laps.push(`${name} ${((performance.now() - t0) / 1000).toFixed(1)}`);
   const took = () => (laps.length ? ` [초: ${laps.join(" · ")}]` : "");
-  const stop = (text) => { say(text + took(), "#b91c1c", "fail"); throw new Error(text); };
+  const stop = (text, done = "fail") => { say(text + took(), "#b91c1c", done); throw new Error(text); };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const visible = (e) => !!(e && (e.offsetWidth || e.offsetHeight));
@@ -87,7 +88,7 @@
   const MONO_SEGMENT = "2구간(1-3)";
   async function addMonorail(qty) {
     const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0];
-    const back = (why) => stop(`${why} 모노레일 없이는 사지 않아서 구매하기를 누르지 않았어요.`);
+    const back = (why, done) => stop(`${why} 모노레일 없이는 사지 않아서 구매하기를 누르지 않았어요.`, done);
     const next = byText("모노레일 선택");
     if (!next) return back("'모노레일 선택' 버튼이 없어요.");
     next.click();
@@ -106,7 +107,7 @@
     const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
     await until(() => slots().length || null, 5000);
     const slot = await until(() => slots().find((e) => left(e) >= qty), 2000);
-    if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`);
+    if (!slot) return back(`${MONO_SEGMENT} 모노레일에 ${qty}장 남은 회차가 없어요.`, "soldout");
     const time = slot.getAttribute("aria-label").slice(0, 5);
     slot.click();
     lap("모노레일 회차");
@@ -117,7 +118,7 @@
     const input = await until(() => buttons('input[aria-label="숫자 입력"]')[0], 3000);
     if (!input) return back("모노레일 매수 입력칸을 못 찾았어요.");
     await setQty(input, qty);
-    if (Number(input.value) !== qty) return back(`모노레일을 ${qty}장으로 못 맞췄어요 (지금 ${input.value}장).`);
+    if (Number(input.value) !== qty) return back(`모노레일을 ${qty}장으로 못 맞췄어요 (지금 ${input.value}장).`, "soldout");
     lap("모노레일 매수");
     return `모노레일 ${MONO_SEGMENT} ${time} ${qty}장`;
   }
@@ -223,7 +224,7 @@
     }
     if (!day) stop(`달력에서 ${dayLabel}을 못 찾았어요.`);
     day = (await settle(findDay, (e) => !e.disabled)) || findDay() || day;
-    if (day.disabled) stop(`${dayLabel}은 그새 품절됐어요.`);
+    if (day.disabled) stop(`${dayLabel}은 그새 품절됐어요.`, "soldout");
     day.click();
     lap("날짜");
 
@@ -232,8 +233,8 @@
     await waitFor(findSlot, `${time} 회차`);
     const open = (e) => !e.disabled && !/마감/.test(text(e));
     const slot = (await settle(findSlot, open)) || findSlot();
-    if (!slot) stop(`${time} 회차가 목록에서 사라졌어요. 다른 회차를 직접 골라 주세요.`);
-    if (!open(slot)) stop(`${time} 회차가 그새 마감됐어요 ('${text(slot)}'). 다른 회차를 직접 골라 주세요.`);
+    if (!slot) stop(`${time} 회차가 목록에서 사라졌어요.`, "soldout");
+    if (!open(slot)) stop(`${time} 회차가 그새 마감됐어요 ('${text(slot)}').`, "soldout");
     slot.click();
     lap("회차");
 
@@ -251,7 +252,7 @@
     lap("매수");
     // 목표 매수를 못 채우면 구매하기를 누르지 않는다 (남은 표가 정말 모자라거나 버튼이 안 눌린 경우)
     if (Number(entryInput.value) !== qty) {
-      stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${entryInput.value}장). 남은 표가 모자랄 수 있어요.`);
+      stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${entryInput.value}장). 남은 표가 모자랄 수 있어요.`, "soldout");
     }
 
     // 7. 모노레일. 못 고르면 여기서 멈춘다
@@ -268,7 +269,7 @@
     if (dry) {
       buy.style.outline = "4px solid #f59e0b";
       const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
-      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono}${took()}`, "#b45309", "ok");
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono}${took()}`, "#b45309", "dry");
     }
     lap("구매하기");
     say(`구매하기 누름 (${mono}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
@@ -292,7 +293,9 @@
       try { notice = notices().find((e) => !shown.has(e)); } catch (_) {}
       if (notice) {
         removeEventListener("pagehide", ordered);
-        stop(`구매하기 뒤 주문서 대신 '${(notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60)}' 창이 떴어요.`);
+        const what = (notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60);
+        // '선택한 상품이 매진되었어요' · '수량을 다시 선택해 주세요.' 는 남이 먼저 사 간 것 → 조용히 닫는다
+        stop(`구매하기 뒤 주문서 대신 '${what}' 창이 떴어요.`, /매진|품절|초기화|다시 선택/.test(what) ? "soldout" : "fail");
       }
     }
     removeEventListener("pagehide", ordered);

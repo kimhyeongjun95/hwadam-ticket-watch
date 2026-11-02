@@ -1,6 +1,7 @@
 // content.js 가 보낸 진행 상황을 맥 수신기(listener.py)의 로컬 로그 서버로 넘긴다.
 // 페이지에서 바로 localhost 로 보내면 브라우저 보안 정책에 막혀서 백그라운드를 거친다.
-// done 이 있으면 끝났다는 뜻: "ok" 면 수신기가 크롬을 앞으로 띄우고, "fail" 이면 알림만 띄운다.
+// done 이 있으면 끝났다는 뜻: "ok"(주문서 뜸)·"dry"(시험 끝) 면 수신기가 크롬을 앞으로 띄우고, "fail" 이면 알림만 띄운다.
+// "soldout"(품절 등 살 게 없음) 이면 수신기는 알리지 않고 여기서 창을 닫는다.
 // show 면 끝나진 않았지만 창이 보여야 해서 크롬을 앞으로 띄운다
 function log(text, done, show) {
   return fetch("http://127.0.0.1:8789/log", {
@@ -137,11 +138,19 @@ chrome.runtime.onConnect.addListener((port) => {
   })();
 });
 
+// 품절 등으로 멈춘 창을 닫는다. Dock 에 내려가 있고 탭이 하나뿐일 때만 (사람이 올려 보고 있거나 다른 탭을 열었으면 둔다)
+async function closeIfHidden(windowId) {
+  const w = await chrome.windows.get(windowId, { populate: true });
+  if (w.state === "minimized" && w.tabs.length === 1) await chrome.windows.remove(windowId);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender) => {
   // 수신기는 창을 내려(최소화) 둔 채 진행시킨다. 주문서가 뜨면 그 창을 올리고 수신기가 크롬을 앞으로 띄운다
-  if (msg?.done === "ok" && sender.tab) {
+  if ((msg?.done === "ok" || msg?.done === "dry") && sender.tab) {
     chrome.windows.update(sender.tab.windowId, { state: "normal", focused: true })
-      .catch(() => {}).then(() => log(msg.log, "ok"));
+      .catch(() => {}).then(() => log(msg.log, msg.done));
+  } else if (msg?.done === "soldout" && sender.tab) {
+    log(msg.log, msg.done).then(() => closeIfHidden(sender.tab.windowId)).catch(() => {});
   } else if (msg?.log) log(msg.log, msg.done);
   if (msg?.trustedClick && sender.tab) {
     naverLogin(sender.tab, msg).catch((e) => log(`클릭 실패: ${e.message}. 직접 진행해 주세요.`));
