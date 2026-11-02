@@ -112,10 +112,12 @@ def write_standby(wid):
 
 
 def standby_state(wid):
-    """대기 창 상태: "ready"(상품 페이지에서 내려가 있음), "busy"(내려간 채 로그인하러 감), "gone"(닫혔거나 사람이 열어 봄)"""
+    """대기 창 상태: "ready"(상품 페이지에서 내려가 있음), "busy"(내려간 채 로그인하러 감), "shown"(사람이 올려 봄), "gone"(닫힘)"""
     out = chrome(f'''if not (exists window id {wid}) then return "gone"
   set w to window id {wid}
   return (minimized of w as text) & " " & (URL of active tab of w)''')
+    if out and out.startswith("false "):
+        return "shown"
     if not out or not out.startswith("true "):
         return "gone"
     return "ready" if out[5:].startswith(watch.PRODUCT_URL) else "busy"
@@ -147,7 +149,7 @@ def hand_to_standby(url):
 def open_in_chrome(url):
     # 대기 창이 있으면 이미 떠 있는 페이지에서 바로 고르게 한다. 없거나 반응이 없으면 새 창으로.
     # 주문서가 뜨면 확장이 창을 올리고 show_chrome 이 크롬을 앞으로 띄운다. 알림은 결과가 나온 뒤에만 (품절이면 조용히 끝)
-    global last_open
+    global last_open, used_standby
     last_open = time.time()
     # Playwright 같은 자동화 도구가 띄운 크롬(--user-data-dir 로 따로 뜸)이 있으면 osascript 가 그쪽으로 가서
     # 확장도 로그인도 없는 창이 열린다 (10/30). 고칠 길이 없어 알리기만 한다
@@ -157,7 +159,9 @@ def open_in_chrome(url):
         log(f"자동화용 크롬이 떠 있음 (pid {', '.join(other)}) — 엉뚱한 크롬에 열릴 수 있음")
         notify_mac("자동화용 크롬이 떠 있어 평소 크롬이 아닌 곳에 열릴 수 있어요. 그 크롬을 닫아 주세요.", "Basso")
     if hand_to_standby(url):
-        write_standby(None)  # 한 번 쓰면 끝 (그 창에서 주문·결제를 한다)
+        # 주문서까지 가면 그 창에서 결제하니 대기 창에서 뺀다. 품절로 멈추면 확장이 알려 와서 되돌린다
+        used_standby = read_standby()
+        write_standby(None)
         log("대기 창에서 바로 진행")
     elif not new_window(url):
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
@@ -182,6 +186,7 @@ last_alert = (0, "")  # (받은 시각, "월/일 시:분 제목") — 메뉴 막
 paused_until = 0  # 403·429 로 맥 조회를 쉬는 끝 시각
 last_done = 0  # 확장이 자동 진행 끝(주문서 뜸·멈춤)을 마지막으로 알려 온 시각
 last_open = 0  # 마지막으로 자동 진행 창을 연 시각
+used_standby = None  # 자동 진행에 넘긴 대기 창 번호
 opened_lock = threading.Lock()
 settings_lock = threading.Lock()
 settings_sync = {"at": "", "error": ""}  # GitHub 변수와 마지막으로 맞춘 시각, 실패 이유
@@ -403,7 +408,7 @@ class LocalServer(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        global last_done, last_open, last_alert
+        global last_done, last_open, last_alert, used_standby
         if self.path.split("?")[0] == "/api/settings":
             return self.save_settings()
         if self.path.split("?")[0] == "/standby/ack":
@@ -433,6 +438,9 @@ class LocalServer(BaseHTTPRequestHandler):
             elif done == "soldout":
                 last_open = 0  # 그 창에서 결제할 일이 없으니 대기 창을 바로 다시 띄운다
                 last_alert = (0, f"{last_alert[1]} → 못 삼")  # 메뉴 막대의 빨간 '예약 가능!'도 내린다
+                if body.get("standby") and used_standby:
+                    write_standby(used_standby)  # 그 창이 새로 읽고 다시 기다린다 (새 창을 안 띄움)
+                    used_standby = None
             elif done == "fail":
                 notify_mac(f"자동 진행이 멈췄어요. Dock 의 크롬 창에서 직접 진행하세요. {body.get('log')}", "Basso")
                 if time.time() - last_open < 5 * 60:
@@ -531,6 +539,8 @@ def standby_loop():
                 continue
             wid = read_standby()
             state = standby_state(wid) if wid else "gone"
+            if state == "shown":
+                continue  # 사람이 올려 보는 중. 그 창도 알림은 받으니 새 창을 또 띄우지 않는다 (닫으면 그때 새로)
             if state == "busy":
                 busy_since = busy_since or time.time()
                 if time.time() - busy_since < 5 * 60:

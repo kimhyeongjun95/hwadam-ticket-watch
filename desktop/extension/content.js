@@ -15,6 +15,7 @@
   // 새로고침해도 다시 돌지 않게 표시를 지운다
   if (fromHash || location.hash === STANDBY) history.replaceState(null, "", location.pathname + location.search);
 
+  let fromStandby = false; // 대기 창이 알림을 받아 진행 중인지
   const banner = document.createElement("div");
   banner.style.cssText =
     "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;" +
@@ -28,7 +29,7 @@
     if (!banner.isConnected && document.body) document.body.appendChild(banner);
     console.log("[hwadam-auto]", text);
     // 맥 수신기 로그에도 남긴다 (background.js 가 localhost 로 전달)
-    try { chrome.runtime.sendMessage({ log: text, done }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ log: text, done, standby: fromStandby }); } catch (_) {}
   };
   // 단계마다 페이지를 열기 시작한 뒤 몇 초째인지 적어 두고 끝날 때 로그에 붙인다 (어디가 느린지 보려고)
   // 대기 창은 알림이 온 때부터 잰다
@@ -36,7 +37,15 @@
   let t0 = 0;
   const lap = (name) => laps.push(`${name} ${((performance.now() - t0) / 1000).toFixed(1)}`);
   const took = () => (laps.length ? ` [초: ${laps.join(" · ")}]` : "");
-  const stop = (text, done = "fail") => { say(text + took(), "#b91c1c", done); throw new Error(text); };
+  const stop = (text, done = "fail") => {
+    say(text + took(), "#b91c1c", done);
+    // 대기 창에서 품절로 멈췄으면 닫고 새로 띄우는 대신(새 창이 화면에 떴다 내려간다) 그 창을 새로 읽어 다시 대기 창으로 쓴다
+    if (done === "soldout" && fromStandby) {
+      sessionStorage.setItem("hwadam-standby", "1");
+      setTimeout(() => location.reload(), 500);
+    }
+    throw new Error(text);
+  };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const visible = (e) => !!(e && (e.offsetWidth || e.offsetHeight));
@@ -146,7 +155,8 @@
         if (used || !SPEC.test(spec)) return;
         used = true;
         port.disconnect();
-        sessionStorage.removeItem("hwadam-standby"); // 한 번 쓰면 대기 창이 아니다
+        sessionStorage.removeItem("hwadam-standby"); // 주문서까지 가면 대기 창이 아니다 (품절이면 stop 이 되돌린다)
+        fromStandby = true;
         t0 = performance.now();
         run(spec).catch((e) => console.warn("[hwadam-auto]", e));
       });
