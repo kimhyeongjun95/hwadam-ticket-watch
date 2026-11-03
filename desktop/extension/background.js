@@ -182,7 +182,12 @@ async function checkStandby() {
     // 옵션 창이 휴대폰 폭에서만 열려서 폭을 정해 뒤에(focused: false — 앞 앱이 안 바뀜) 연 뒤 바로 내린다.
     // 처음부터 내린 채 만들면 폭을 못 정하고, 내린 창 크기를 바꾸면 다시 올라온다 (11/2)
     const w = await chrome.windows.create({ url: need.url, focused: false, left: 60, top: 40, width: 480, height: 940 });
-    await chrome.windows.update(w.id, { state: "minimized" });
+    // 막 만든 창은 내리라고 해도 가끔 안 내려가서 (11/3 09:51 화면에 남음) 내려갈 때까지 몇 번 더 한다
+    for (let i = 0; i < 10; i++) {
+      await chrome.windows.update(w.id, { state: "minimized" }).catch(() => {});
+      await sleep(300);
+      if ((await chrome.windows.get(w.id).catch(() => null))?.state === "minimized") break;
+    }
     await chrome.storage.local.set({ standbyWindow: w.id });
     const after = await chrome.windows.get(w.id).catch(() => null);
     log(`대기 창 띄움 (${after?.state} ${after?.width}x${after?.height})`);
