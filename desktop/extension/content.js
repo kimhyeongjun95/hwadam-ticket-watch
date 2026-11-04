@@ -261,8 +261,16 @@
     if (!calendarOpen() && innerWidth > 700 && !(await until(calendarOpen, 3000))) {
       stop("창이 넓으면 옵션 창이 안 열려요. 창 폭을 휴대폰처럼 좁게 줄이고 다시 열어 주세요.");
     }
-    await waitFor(calendarOpen, `날짜 달력 (보인 것: ${dump()})`, 3000);
+    // 입장권 예약에서 들어온 추가상품은 날짜가 그 예약 날로 정해져 달력 대신 '2026.11.07(토)' 만 보인다
+    const fixed = `${y}.${mo}.${d}(`;
+    const fixedDay = () => buttons().find((e) => /^\d{4}\.\d{2}\.\d{2}\(/.test(text(e)));
+    const shown = await until(() => calendarOpen() || fixedDay(), 3000);
+    if (!shown) stop(`날짜 달력을 찾지 못했어요 (보인 것: ${dump()}).`);
     lap("옵션창");
+    if (!calendarOpen()) {
+      if (!text(fixedDay()).startsWith(fixed)) stop(`이 예약은 ${text(fixedDay())} 이라 ${y}.${mo}.${d} 모노레일은 못 사요.`);
+      return;
+    }
     const dayLabel = `${y}년 ${Number(mo)}월 ${Number(d)}일`;
     const findDay = () => [...document.querySelectorAll(`abbr[aria-label="${dayLabel}"]`)].map((a) => a.closest("button")).find(visible);
     let day = null;
@@ -309,7 +317,8 @@
     const inRange = (e) => at(e) >= from && at(e) <= to;
     const slot = await until(() => slots().find((e) => inRange(e) && left(e) >= qty), 2000);
     if (!slot) {
-      const seen = slots().filter(inRange).map((e) => `${at(e)} ${left(e)}장`).join(", ") || "없음";
+      const seen = slots().filter(inRange).map((e) => `${at(e)} ${left(e)}장`).join(", ")
+        || `없음 — 보인 회차 ${slots().length}개: ${slots().slice(0, 6).map((e) => e.getAttribute("aria-label") + "/" + text(e)).join(", ")}`;
       stop(`${MONO_SEGMENT} 모노레일 ${from}~${to}에 ${qty}장 남은 회차가 없어요 (그 범위: ${seen}).`, "soldout");
     }
     const time = at(slot);
