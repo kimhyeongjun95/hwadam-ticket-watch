@@ -98,8 +98,8 @@
   // '모노레일 선택' → (화담채를 안 골라서 뜨는 확인 창의) '모노레일로 이동' → 구간 → qty 장 남은 가장 이른 회차 → 성인 → 매수.
   // 고르면 설명을 돌려주고, 못 고르면 구매하기를 누르지 않고 멈춘다 (모노레일 없이 입장권만은 사지 않음 — 11/2)
   const MONO_SEGMENT = "2구간(1-3)";
-  // 모노레일 회차는 입장 회차 20분 뒤부터 1시간 뒤까지만 고른다 (11/2)
-  const MONO_AFTER = [20, 60];
+  // 모노레일 회차는 입장 회차 40분 뒤부터 1시간 뒤까지만 고른다 (11/2 20분, 11/4 40분으로)
+  const MONO_AFTER = [40, 60];
   const minutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
   async function addMonorail(qty, entryTime) {
     const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0];
