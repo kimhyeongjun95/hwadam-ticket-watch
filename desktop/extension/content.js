@@ -7,8 +7,11 @@
 // #hwadam-auto=… 주소를 받아 이미 떠 있는 페이지에서 바로 고른다 (페이지를 새로 읽지 않아 몇 초 빠름).
 (() => {
   const SPEC = /^#hwadam-auto=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})_(\d+)(_dry)?$/;
+  // 모노레일 추가상품(따로 사는 탑승권) 페이지: #hwadam-mono=날짜_시작-끝_매수 → 그 사이 매수가 남은 가장 이른 회차 (11/4)
+  const MONO_SPEC = /^#hwadam-mono=(\d{4})-(\d{2})-(\d{2})_(\d{2}:\d{2})-(\d{2}:\d{2})_(\d+)(_dry)?$/;
   const STANDBY = "#hwadam-standby";
-  const fromHash = SPEC.test(location.hash) ? location.hash : null;
+  const isMonoPage = location.pathname.includes("/10367231");
+  const fromHash = (isMonoPage ? MONO_SPEC : SPEC).test(location.hash) ? location.hash : null;
   // 10분마다 새로 읽거나 로그인하고 돌아와도(이때는 # 이 없을 수 있음) 대기 창인 걸 알도록 탭에 표시해 둔다
   if (location.hash === STANDBY) sessionStorage.setItem("hwadam-standby", "1");
   const standby = !fromHash && sessionStorage.getItem("hwadam-standby") === "1";
@@ -149,7 +152,7 @@
     }
   };
   const goLogin = (spec) => {
-    const back = location.origin + location.pathname + spec;
+    const back = location.origin + location.pathname + location.search + spec; // 추가상품은 예약에서 온 주소(? 뒤)가 있어야 살 수 있다
     location.href = `https://accounts.yanolja.com/?service=yanolja&redirectUrl=${encodeURIComponent(back)}`;
   };
 
@@ -186,14 +189,157 @@
     goLogin(STANDBY);
   }
 
+
+  // 구매하기 — 지금 보이는 단계의 매수 입력칸과 같은 창 안의 버튼. 주문서가 뜨면 "ok", 매진 창이 뜨면 "soldout"
+  async function buyAndWait(input, what, dry, picked = what) {
+    let box = input.parentElement, buy = null;
+    while (box && !buy) {
+      buy = [...box.querySelectorAll("button")].find((e) => visible(e) && text(e) === "구매하기" && !e.disabled);
+      box = box.parentElement;
+    }
+    if (!buy) stop("'구매하기' 버튼을 못 찾았어요. 직접 눌러 주세요.");
+    if (dry) {
+      buy.style.outline = "4px solid #f59e0b";
+      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${picked}${took()}`, "#b45309", "dry");
+    }
+    lap("구매하기");
+    say(`구매하기 누름 (${what}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
+    // 주문서로 넘어가면 이 페이지가 사라진다. 그대로 남아 창이 뜨면 ('선택한 상품이 매진되었어요' 등) 무엇인지 남긴다
+    const notices = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((e) => visible(e) && text(e))
+      .concat([...document.querySelectorAll("body *")].filter((e) => !e.children.length && /매진|품절|초기화|다시 선택/.test(e.textContent) && visible(e)));
+    let shown = new Set();
+    try { shown = new Set(notices()); } catch (_) {} // 무슨 일이 있어도 구매하기는 누른다
+    const here = location.href; // 같은 페이지 안에서 주문서 주소로 바뀌어도 넘어간 것
+    // 주문서로 넘어가면 이 페이지가 사라지니 그 직전(pagehide)에 알린다
+    const ordered = () => say(`주문서로 넘어감 (${what})`, null, "ok");
+    addEventListener("pagehide", ordered, { once: true });
+    buy.click();
+    for (const end = Date.now() + 15000; Date.now() < end; ) {
+      await sleep(300);
+      if (location.href !== here) {
+        removeEventListener("pagehide", ordered);
+        return ordered();
+      }
+      let notice = null;
+      try { notice = notices().find((e) => !shown.has(e)); } catch (_) {}
+      if (notice) {
+        removeEventListener("pagehide", ordered);
+        const seen = (notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60);
+        // '선택한 상품이 매진되었어요' · '수량을 다시 선택해 주세요.' 는 남이 먼저 사 간 것 → 조용히 닫는다
+        stop(`구매하기 뒤 주문서 대신 '${seen}' 창이 떴어요.`, /매진|품절|초기화|다시 선택/.test(seen) ? "soldout" : "fail");
+      }
+    }
+    removeEventListener("pagehide", ordered);
+    say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c", "fail");
+  }
+
+  // 화면에 보이는 고를 거리를 적어 남긴다 (모노레일 추가상품 화면은 처음이라 어디서 막혔는지 보려고)
+  const dump = () => buttons().map((e) => e.getAttribute("aria-label") || text(e)).filter(Boolean).slice(-25).join(" | ")
+    + ` / 창: ${[...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')].filter(visible).map((e) => e.innerText.replace(/\s+/g, " ").slice(0, 300)).join(" ‖ ") || "없음"}`
+    + ` / 끝 글: ${(document.body?.innerText || "").replace(/\s+/g, " ").slice(-300)}`;
+
+  // 옵션 창을 열고 달력에서 날짜를 누른다 (입장권 페이지와 같은 모양)
+  async function openSheetAndPickDay(y, mo, d) {
+    const calendarOpen = () => document.querySelector('button[aria-label="다음 날짜로 이동"]');
+    const sheetOpen = () => buttons().some((e) => text(e).startsWith("접어두기"));
+    // 추가상품은 옵션 창을 열면 '입장권을 산 사람용' 안내 창이 먼저 떠서 '확인'을 누른다
+    const confirm = () => byText("확인");
+    for (const end = Date.now() + 20000; !calendarOpen() && !sheetOpen() && Date.now() < end; ) {
+      if (confirm()) {
+        confirm().click();
+        await until(() => calendarOpen() || sheetOpen(), 1500);
+        continue;
+      }
+      const targets = buttons().filter((e) => text(e) === "옵션 선택하기").reverse();
+      if (!targets.length) await until(() => buttons().some((e) => text(e) === "옵션 선택하기") || confirm(), 1000);
+      for (const b of targets) {
+        if (calendarOpen() || sheetOpen() || confirm()) break;
+        b.click();
+        await until(() => calendarOpen() || sheetOpen() || confirm(), 600);
+      }
+    }
+    if (!calendarOpen() && innerWidth > 700 && !(await until(calendarOpen, 3000))) {
+      stop("창이 넓으면 옵션 창이 안 열려요. 창 폭을 휴대폰처럼 좁게 줄이고 다시 열어 주세요.");
+    }
+    await waitFor(calendarOpen, `날짜 달력 (보인 것: ${dump()})`, 3000);
+    lap("옵션창");
+    const dayLabel = `${y}년 ${Number(mo)}월 ${Number(d)}일`;
+    const findDay = () => [...document.querySelectorAll(`abbr[aria-label="${dayLabel}"]`)].map((a) => a.closest("button")).find(visible);
+    let day = null;
+    for (let i = 0; i < 4 && !day; i++) {
+      day = findDay();
+      if (!day) {
+        document.querySelector('button[aria-label="다음 날짜로 이동"]')?.click();
+        day = await until(findDay, 1500);
+      }
+    }
+    if (!day) stop(`달력에서 ${dayLabel}을 못 찾았어요.`);
+    day = (await settle(findDay, (e) => !e.disabled)) || findDay() || day;
+    if (day.disabled) stop(`${dayLabel}은 그새 품절됐어요.`, "soldout");
+    day.click();
+    lap("날짜");
+  }
+
+  // 모노레일 추가상품만 산다: 날짜 → 구간 → 시작~끝 사이 매수가 남은 가장 이른 회차 → 성인 → 매수 → 구매하기 (11/4)
+  async function runMono(spec, loginTried) {
+    const [, y, mo, d, from, to, qtyText, dry] = spec.match(MONO_SPEC);
+    const qty = Number(qtyText);
+    if (document.readyState === "loading") await new Promise((r) => document.addEventListener("DOMContentLoaded", r, { once: true }));
+    lap("화면");
+    say(`모노레일만 ${Number(mo)}/${Number(d)} ${from}~${to} ${qty}장 고르는 중…`);
+    if (!isLoggedIn()) {
+      if (loginTried) stop("네이버로 로그인했는데도 NOL 로그인이 안 됐어요. 직접 로그인 후 진행해 주세요.");
+      say("NOL 로그인이 풀려 있어 네이버로 로그인하는 중…");
+      await chrome.storage.local.set({ pending: { spec, at: Date.now(), loginTried: true } });
+      return goLogin(spec);
+    }
+    await openSheetAndPickDay(y, mo, d);
+
+    const segment = () => buttons(`button[role="option"][aria-label="${MONO_SEGMENT} 선택하기"]`)[0]
+      || buttons('button[role="option"]').find((e) => text(e).startsWith(MONO_SEGMENT));
+    const slots = () => buttons('button[role="option"]').filter((e) => /^\d{2}:\d{2} 선택$/.test(e.getAttribute("aria-label") || ""));
+    // 구간을 먼저 고르는 화면이면 고르고, 회차가 바로 뜨면 넘어간다
+    const first = await until(() => segment() || (slots().length ? slots()[0] : null), 5000);
+    if (!first) stop(`${MONO_SEGMENT} 구간도 회차도 안 보여요 (보인 것: ${dump()}).`);
+    if (first === segment()) { first.click(); lap("구간"); }
+    if (!(await until(() => slots().length || null, 5000))) stop(`회차가 안 떠요 (보인 것: ${dump()}).`);
+
+    const left = (e) => (e.disabled ? 0 : Number((text(e).slice(5).match(/^(\d+)매/) || [])[1] || 0));
+    const at = (e) => e.getAttribute("aria-label").slice(0, 5);
+    const inRange = (e) => at(e) >= from && at(e) <= to;
+    const slot = await until(() => slots().find((e) => inRange(e) && left(e) >= qty), 2000);
+    if (!slot) {
+      const seen = slots().filter(inRange).map((e) => `${at(e)} ${left(e)}장`).join(", ") || "없음";
+      stop(`${MONO_SEGMENT} 모노레일 ${from}~${to}에 ${qty}장 남은 회차가 없어요 (그 범위: ${seen}).`, "soldout");
+    }
+    const time = at(slot);
+    slot.click();
+    lap("회차");
+
+    const adult = await until(() => buttons('button[role="option"]').find((e) => /성인/.test(text(e)) && !e.disabled), 3000);
+    if (!adult) stop(`'성인'을 못 찾았어요 (보인 것: ${dump()}).`);
+    adult.click();
+    lap("성인");
+    // 할인 단계가 있으면 '일반'
+    const normal = await until(() => buttons('button[role="option"]').find((e) => text(e).startsWith("일반") && !e.disabled), 1000);
+    if (normal) { normal.click(); lap("일반"); }
+    const input = await until(() => buttons('input[aria-label="숫자 입력"]')[0], 3000);
+    if (!input) stop(`매수 입력칸을 못 찾았어요 (보인 것: ${dump()}).`);
+    await setQty(input, qty);
+    if (Number(input.value) !== qty) stop(`${qty}장으로 못 맞춰서 구매하기를 누르지 않았어요 (지금 ${input.value}장).`, "soldout");
+    lap("매수");
+    await buyAndWait(input, `모노레일만 ${MONO_SEGMENT} ${Number(mo)}/${Number(d)} ${time} ${qty}장`, dry);
+  }
+
   async function run(hashSpec) {
     // 로그인하러 다녀오는 사이 # 이 없어질 수 있어 진행할 회차를 저장소에 맡겨 둔다 (3분 안에 돌아와야 유효)
     const { pending } = await chrome.storage.local.get("pending");
-    const resumed = pending && SPEC.test(pending.spec) && Date.now() - pending.at < 3 * 60e3 ? pending : null;
+    const resumed = pending && (isMonoPage ? MONO_SPEC : SPEC).test(pending.spec) && Date.now() - pending.at < 3 * 60e3 ? pending : null;
     const spec = hashSpec || resumed?.spec;
     if (!spec) return;
     const loginTried = resumed?.spec === spec && resumed.loginTried;
     if (resumed || hashSpec) await chrome.storage.local.remove("pending");
+    if (isMonoPage) return runMono(spec, loginTried);
     const [, y, mo, d, time, qtyText, dry] = spec.match(SPEC);
     const qty = Number(qtyText);
 
@@ -278,49 +424,11 @@
     // 7. 모노레일. 못 고르면 여기서 멈춘다
     const mono = await addMonorail(qty, time);
 
-    // 8. 구매하기 — 지금 보이는 단계(모노레일 또는 입장권)의 매수 입력칸과 같은 창 안의 버튼
+    // 8. 구매하기
     const input = buttons('input[aria-label="숫자 입력"]')[0] || entryInput;
-    let box = input.parentElement, buy = null;
-    while (box && !buy) {
-      buy = [...box.querySelectorAll("button")].find((e) => visible(e) && text(e) === "구매하기" && !e.disabled);
-      box = box.parentElement;
-    }
-    if (!buy) stop("'구매하기' 버튼을 못 찾았어요. 직접 눌러 주세요.");
-    if (dry) {
-      buy.style.outline = "4px solid #f59e0b";
-      const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
-      return say(`시험 모드라 '구매하기' 직전에 멈췄어요 (노란 테두리). 선택: ${item} ${entryInput.value}장 + ${mono}${took()}`, "#b45309", "dry");
-    }
-    lap("구매하기");
-    say(`구매하기 누름 (${mono}) — 주문서가 뜨면 결제만 하세요.${took()}`, "#047857");
-    // 주문서로 넘어가면 이 페이지가 사라진다. 그대로 남아 창이 뜨면 ('선택한 상품이 매진되었어요' 등) 무엇인지 남긴다
-    const notices = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].filter((e) => visible(e) && text(e))
-      .concat([...document.querySelectorAll("body *")].filter((e) => !e.children.length && /매진|품절|초기화|다시 선택/.test(e.textContent) && visible(e)));
-    let shown = new Set();
-    try { shown = new Set(notices()); } catch (_) {} // 무슨 일이 있어도 구매하기는 누른다
-    const here = location.href; // 같은 페이지 안에서 주문서 주소로 바뀌어도 넘어간 것
-    // 주문서로 넘어가면 이 페이지가 사라지니 그 직전(pagehide)에 알린다
-    const ordered = () => say(`주문서로 넘어감 (${mono})`, null, "ok");
-    addEventListener("pagehide", ordered, { once: true });
-    buy.click();
-    for (const end = Date.now() + 15000; Date.now() < end; ) {
-      await sleep(300);
-      if (location.href !== here) {
-        removeEventListener("pagehide", ordered);
-        return ordered();
-      }
-      let notice = null;
-      try { notice = notices().find((e) => !shown.has(e)); } catch (_) {}
-      if (notice) {
-        removeEventListener("pagehide", ordered);
-        const what = (notice.innerText || text(notice)).trim().replace(/\s+/g, " ").slice(0, 60);
-        // '선택한 상품이 매진되었어요' · '수량을 다시 선택해 주세요.' 는 남이 먼저 사 간 것 → 조용히 닫는다
-        stop(`구매하기 뒤 주문서 대신 '${what}' 창이 떴어요.`, /매진|품절|초기화|다시 선택/.test(what) ? "soldout" : "fail");
-      }
-    }
-    removeEventListener("pagehide", ordered);
-    say("구매하기 누른 지 15초가 지났는데 주문서가 안 떠요. 화면을 확인해 주세요.", "#b91c1c", "fail");
+    const item = document.querySelector('button[aria-label$="옵션 삭제"]')?.getAttribute("aria-label")?.replace(/ 옵션 삭제$/, "");
+    await buyAndWait(input, mono, dry, `${item} ${entryInput.value}장 + ${mono}`);
   }
 
-  (standby ? waitInStandby() : run(fromHash)).catch((e) => console.warn("[hwadam-auto]", e));
+  (standby && !isMonoPage ? waitInStandby() : run(fromHash)).catch((e) => console.warn("[hwadam-auto]", e));
 })();

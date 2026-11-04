@@ -7,3 +7,5 @@ logs/
 .poll-every
 .standby-window
 .reload-extension
+.mono-only.json
+.mono-only.done.json

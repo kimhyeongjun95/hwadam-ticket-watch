@@ -30,6 +30,12 @@ sys.path.insert(0, ROOT)
 import watch  # noqa: E402  맥 조회도 GitHub 과 같은 조회·판정 코드를 쓴다
 TOPIC_FILE = os.path.join(ROOT, ".ntfy-topic")
 AUTO_MARK = "#hwadam-auto="
+# 모노레일만 따로 (추가상품). 이 파일에 {"date": "2026-11-07", "from": "09:20", "to": "10:00", "qty": 2} 를 두면
+# 맥 조회 때 그 날짜·시각 사이에 qty 장 남은 2구간 회차를 같이 보고, 열리면 추가상품 페이지에서 주문서까지 띄운다 (11/4).
+# 주문서가 뜨면 두 번 사지 않게 파일 이름을 .mono-only.done.json 으로 바꿔 멈춘다
+MONO_ONLY_FILE = os.path.join(ROOT, ".mono-only.json")
+MONO_MARK = "#hwadam-mono="
+MONO_ONLY_URL = "https://leisure-web.yanolja.com/leisure/10367231"
 LOG_PORT = 8789  # 크롬 확장이 진행 상황을 보내오고, 메뉴 막대·단축어가 맥 조회를 켜고 끄는 로컬 포트
 POLL_FLAG = os.path.join(ROOT, ".local-poll")  # 이 파일이 있으면 맥 조회가 켜진 것 (껐다 켜도 유지)
 POLL_EVERY_FILE = os.path.join(ROOT, ".poll-every")  # 이 맥에서만 간격을 바꾸려면 초를 한 줄로 (git 에 안 올림)
@@ -130,7 +136,7 @@ def open_in_chrome(url):
     if other:
         log(f"자동화용 크롬이 떠 있음 (pid {', '.join(other)}) — 엉뚱한 크롬에 열릴 수 있음")
         notify_mac("자동화용 크롬이 떠 있어 평소 크롬이 아닌 곳에 열릴 수 있어요. 그 크롬을 닫아 주세요.", "Basso")
-    if hand_to_standby(url):
+    if MONO_MARK not in url and hand_to_standby(url):  # 대기 창은 입장권 페이지라 모노레일 추가상품은 새 창으로
         log("대기 창에서 바로 진행")
     elif not new_window(url):
         # 자동화 권한을 안 줬으면 일반 탭으로라도 연다 (폭이 넓으면 확장이 멈추고 안내를 띄움)
@@ -407,6 +413,9 @@ class LocalServer(BaseHTTPRequestHandler):
             done = body.get("done")
             if done:
                 last_done = time.time()
+            if done == "ok" and "모노레일만" in (body.get("log") or "") and os.path.exists(MONO_ONLY_FILE):
+                os.replace(MONO_ONLY_FILE, MONO_ONLY_FILE.replace(".json", ".done.json"))
+                log("모노레일 주문서가 떠서 모노레일 따로 감시를 멈춤")
             if done in ("ok", "dry"):
                 show_chrome()
                 notify_mac(f"주문서가 떴어요. 결제하세요. {body.get('log')}" if done == "ok" else body.get("log") or "", "Glass")
@@ -416,6 +425,9 @@ class LocalServer(BaseHTTPRequestHandler):
             elif body.get("show"):
                 show_chrome()
             elif done == "soldout":
+                with opened_lock:  # 모노레일만은 시각대 하나가 한 주소라, 품절로 멈췄으면 다음 조회에서 바로 다시 가게 한다
+                    for k in [k for k in opened_at if MONO_MARK in k]:
+                        del opened_at[k]
                 last_open = 0  # 그 창에서 결제할 일이 없다 (대기 창이었으면 새로 읽고 다시 기다린다)
                 last_alert = (0, f"{last_alert[1]} → 못 삼")  # 메뉴 막대의 빨간 '예약 가능!'도 내린다
             elif done == "fail":
@@ -434,7 +446,7 @@ class LocalServer(BaseHTTPRequestHandler):
         if self.headers.get("Origin") is not None or not (self.headers.get("Content-Type") or "").startswith("application/json"):
             return self.reply_json({"ok": False}, 403)
         url = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}").get("url") or ""
-        if not url.startswith(watch.PRODUCT_URL + AUTO_MARK):
+        if not (url.startswith(watch.PRODUCT_URL + AUTO_MARK) or (url.startswith(MONO_ONLY_URL) and MONO_MARK in url)):
             return self.reply_json({"ok": False}, 400)
         threading.Thread(target=open_in_chrome, args=(url,), daemon=True).start()
         self.reply_json({"ok": True})
@@ -517,10 +529,47 @@ def need_standby():
     return True
 
 
+def mono_only_target():
+    try:
+        with open(MONO_ONLY_FILE) as f:
+            t = json.load(f)
+        return t if t.get("date", "") >= datetime.now(watch.KST).date().isoformat() else None
+    except (OSError, ValueError):
+        return None
+
+
+def poll_mono_only(prev_cell):
+    """모노레일 추가상품에서 노리는 시각대에 qty 장 남은 회차가 있으면 사러 간다. 로그용 상태 글을 돌려준다"""
+    t = mono_only_target()
+    if not t:
+        return None
+    base, segment = watch.MONORAIL_APIS["추가상품"]
+    rounds = watch.api(f"/rounds?date={t['date']}&productOptionItemIds={segment}", base)
+    seen = [(r["time"], r["inventoryQuantity"]) for r in rounds if t["from"] <= r["time"] <= t["to"]]
+    ok = [tm for tm, q in seen if q >= t["qty"]]
+    cell = f"{watch.label(t['date'])} {t['from']}~{t['to']} " + (", ".join(f"{tm} {q}장" for tm, q in seen if q) or "다 0장")
+    if cell != prev_cell:
+        log(f"맥 조회: 모노레일만 {cell}")
+    if ok:
+        # 추가상품은 상품 주소로 바로 들어가면 '해당 경로로 접속하면 상품을 구매할 수 없어요' 가 떠서,
+        # 입장권 예약에서 추가상품 구매로 들어간 주소("url")가 있어야 맥이 사 줄 수 있다. 없으면 폰으로만 알린다
+        title = f"화담숲 모노레일 {watch.label(t['date'])} {ok[0]} {t['qty']}장 열림!"
+        url = f"{t.get('url') or MONO_ONLY_URL}{MONO_MARK}{t['date']}_{t['from']}-{t['to']}_{t['qty']}"
+        if claim(url):
+            note_alert(title)
+            if t.get("url"):
+                log(f"맥 조회: 모노레일만 {ok[0]} {t['qty']}장 → 사러 감")
+                open_in_chrome(url)
+            else:
+                log(f"맥 조회: {title} (예약에서 온 주소가 없어 폰으로만 알림)")
+                notify_phone(title, f"{cell}\nNOL 앱 예약 내역에서 모노레일 추가상품을 사세요.")
+    return cell
+
+
 def poll_loop():
     """맥 조회가 켜져 있으면 POLL_EVERY 초마다 직접 조회한다. 판정·알림은 GitHub 과 같은 watch.py 코드."""
     global last_poll, paused_until
-    prev, prev_open, cells, was_on = {}, {}, {}, None
+    prev, prev_open, cells, was_on, mono_cell = {}, {}, {}, None, None
     while True:
         started = time.time()
         try:
@@ -557,6 +606,7 @@ def poll_loop():
                         except Exception as e:
                             log(f"맥 조회: 폰 알림 실패 {watch.describe(e)}")
                 prev, prev_open = {d: cur[d]["status"] for d in dates}, cur_open
+                mono_cell = poll_mono_only(mono_cell)
         except Exception as e:
             reason = watch.describe(e)
             log(f"맥 조회 실패: {reason}")
